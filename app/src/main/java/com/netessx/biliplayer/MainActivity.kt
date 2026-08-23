@@ -581,6 +581,7 @@ private fun AboutScreen() {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text("本项目是BiliPlayer的Android端实现，采用WebView并支持后台播放。由Gingmzmzx借助Claude Code开发", style = MaterialTheme.typography.bodyMedium)
+        Text("本项目仍在早期开发阶段，可能仍不稳定，存在许多bug，请您积极前往GitHub反馈，感谢您提交issue。也强烈建议您前往我的爱发电支持我：https://afdian.com/a/Gingmzmzx", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.weight(1f))
         Text(
             "v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE}) · 调试用",

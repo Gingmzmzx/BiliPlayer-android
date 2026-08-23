@@ -1,9 +1,12 @@
 package com.netessx.biliplayer
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -76,9 +79,16 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -570,18 +580,20 @@ private fun AboutScreen() {
                 Text("• 偏好：分P / 开始秒 / 结束秒，按 bvid 持久化", style = MaterialTheme.typography.bodySmall)
             }
         }
-        Text(
+        LinkText(
             "相关项目：桌面端：https://github.com/Gingmzmzx/BiliPlayer（Python + Playwright）",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            "https://github.com/Gingmzmzx/BiliPlayer"
         )
-        Text(
+        LinkText(
             "本项目开源地址：https://github.com/Gingmzmzx/BiliPlayer-android",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            "https://github.com/Gingmzmzx/BiliPlayer-android"
         )
         Text("本项目是BiliPlayer的Android端实现，采用WebView并支持后台播放。由Gingmzmzx借助Claude Code开发", style = MaterialTheme.typography.bodyMedium)
-        Text("本项目仍在早期开发阶段，可能仍不稳定，存在许多bug，请您积极前往GitHub反馈，感谢您提交issue。也强烈建议您前往我的爱发电支持我：https://afdian.com/a/Gingmzmzx", style = MaterialTheme.typography.bodyMedium)
+        LinkText(
+            "本项目仍在早期开发阶段，可能仍不稳定，存在许多bug，请您积极前往GitHub反馈，感谢您提交issue。也强烈建议您前往我的爱发电支持我：https://afdian.com/a/Gingmzmzx",
+            "https://afdian.com/a/Gingmzmzx",
+            textStyle = MaterialTheme.typography.bodyMedium
+        )
         Spacer(Modifier.weight(1f))
         Text(
             "v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE}) · 调试用",
@@ -589,6 +601,39 @@ private fun AboutScreen() {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
+}
+
+/** 把文本中的 URL 渲染成可点击链接（带下划线+主题色），点击在浏览器中打开。 */
+@Composable
+private fun LinkText(fullText: String, url: String, textStyle: TextStyle = MaterialTheme.typography.bodySmall) {
+    val context = LocalContext.current
+    val annotated = buildAnnotatedString {
+        val idx = fullText.indexOf(url)
+        if (idx >= 0) {
+            append(fullText.substring(0, idx))
+            withLink(
+                LinkAnnotation.Clickable(
+                    tag = url,
+                    styles = TextLinkStyles(
+                        style = SpanStyle(
+                            color = MaterialTheme.colorScheme.primary,
+                            textDecoration = TextDecoration.Underline
+                        )
+                    )
+                ) { openUrl(context, url) }
+            ) {
+                append(url)
+            }
+            append(fullText.substring(idx + url.length))
+        } else {
+            append(fullText)
+        }
+    }
+    Text(annotated, style = textStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+private fun openUrl(context: Context, url: String) {
+    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
 }
 
 @Composable

@@ -30,7 +30,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -38,6 +47,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -60,7 +70,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -87,11 +100,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class AppTab(val label: String, val icon: String) {
-    PLAYER("播放器", "▶"),
-    PLAYLIST("播放列表", "📋"),
-    LOG("日志", "📄"),
-    ABOUT("关于", "ℹ️"),
+private enum class AppTab(val label: String, val icon: ImageVector) {
+    PLAYER("播放器", Icons.Filled.PlayArrow),
+    PLAYLIST("播放列表", Icons.Filled.List),
+    LOG("日志", Icons.Filled.Edit),
+    ABOUT("关于", Icons.Filled.Info),
 }
 
 @Composable
@@ -135,7 +148,7 @@ fun BiliPlayerApp() {
                         NavigationBarItem(
                             selected = currentTab == tab,
                             onClick = { currentTab = tab },
-                            icon = { Text(tab.icon, fontSize = 18.sp) },
+                            icon = { Icon(tab.icon, contentDescription = tab.label) },
                             label = { Text(tab.label) }
                         )
                     }
@@ -318,14 +331,22 @@ private fun PlayerScreen(uiState: PlayerUiState, showWebView: Boolean, onToggleW
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TextButton(onClick = { PlayerController.prev() }) { Text("⏮", fontSize = 20.sp) }
+            TextButton(onClick = { PlayerController.prev() }) {
+                Icon(Icons.Filled.SkipPrevious, contentDescription = "上一首")
+            }
             FilledIconButton(
                 onClick = { PlayerController.playPause() },
-                modifier = Modifier.size(60.dp)
+                modifier = Modifier.size(64.dp)
             ) {
-                Text(if (uiState.isPlaying) "⏸" else "▶", fontSize = 24.sp)
+                Icon(
+                    imageVector = if (uiState.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    contentDescription = if (uiState.isPlaying) "暂停" else "播放",
+                    modifier = Modifier.size(28.dp)
+                )
             }
-            TextButton(onClick = { PlayerController.next() }) { Text("⏭", fontSize = 20.sp) }
+            TextButton(onClick = { PlayerController.next() }) {
+                Icon(Icons.Filled.SkipNext, contentDescription = "下一首")
+            }
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -565,9 +586,9 @@ private fun LogBox(lines: List<String>, modifier: Modifier = Modifier) {
     }
 }
 
-/** 从 URL 加载封面图（B 站图片需要 Referer 防盗链头）。 */
+/** 从 URL 加载封面图（B 站图片需要 Referer 防盗链头），带圆角裁剪。 */
 @Composable
-private fun RemoteImage(url: String, modifier: Modifier = Modifier) {
+private fun RemoteImage(url: String, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) {
     var bitmap by remember(url) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(url) {
         if (url.isBlank()) return@LaunchedEffect
@@ -590,12 +611,12 @@ private fun RemoteImage(url: String, modifier: Modifier = Modifier) {
         Image(
             bitmap = bmp.asImageBitmap(),
             contentDescription = null,
-            modifier = modifier,
+            modifier = modifier.clip(shape),
             contentScale = ContentScale.Crop
         )
     } else {
         Box(
-            modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+            modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center
         ) {
             Text("封面", color = MaterialTheme.colorScheme.onSurfaceVariant)

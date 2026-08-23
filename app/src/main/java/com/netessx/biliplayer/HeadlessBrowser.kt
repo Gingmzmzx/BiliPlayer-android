@@ -111,26 +111,25 @@ class HeadlessBrowser(private val context: Context) {
      * [onDone] 返回是否找到并点击了元素。
      */
     fun touchClick(selector: String, onDone: (Boolean) -> Unit) {
-        val rectJs = """
+        val scrollJs = """
             (function(){
               var el = document.querySelector(${JSONObject.quote(selector)});
-              if (!el) return JSON.stringify({found:false});
-              try { el.scrollIntoView({block:'center'}); } catch(e){}
-              var r = el.getBoundingClientRect();
-              return JSON.stringify({found:true, x:r.left+r.width/2, y:r.top+r.height/2});
+              if (!el) return false;
+              // 滚动到视口左上角，元素顶到视口顶端
+              try { el.scrollIntoView({block:'start', inline:'start'}); } catch(e){}
+              return true;
             })()
         """.trimIndent()
-        evaluate(rectJs) { raw ->
-            val obj = parseJsResult(raw)
-            if (obj == null || !obj.optBoolean("found", false)) {
+        evaluate(scrollJs) { raw ->
+            if (!raw.trim().equals("true", ignoreCase = true)) {
                 onDone(false)
                 return@evaluate
             }
             val web = webView ?: run { onDone(false); return@evaluate }
-            // getBoundingClientRect 返回 CSS 像素，dispatchTouchEvent 需要视图物理像素
-            val scale = web.scale
-            val x = obj.optDouble("x", 0.0).toFloat() * scale
-            val y = obj.optDouble("y", 0.0).toFloat() * scale
+            // 元素已滚到左上角，固定坐标点击（留一点边距）
+            val x = 50f
+            val y = 40f
+            log("touchClick: 固定点击 ($x, $y)")
             val downTime = SystemClock.uptimeMillis()
             val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
             web.dispatchTouchEvent(down)

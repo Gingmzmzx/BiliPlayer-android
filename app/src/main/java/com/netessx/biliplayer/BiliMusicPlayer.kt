@@ -2,6 +2,7 @@ package com.netessx.biliplayer
 
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.util.Random
@@ -67,10 +68,13 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         playIndex(0)
     }
 
-    /** 停止轮询（切歌/重新抓取时调用）。 */
+    /** 停止播放：停止轮询并暂停当前视频。 */
     fun stop() {
         stopPolling()
         loadingVideo = false
+        browser.evaluate("(function(){var v=document.querySelector('video');if(v)v.pause();})()")
+        isPlaying = false
+        emit()
     }
 
     fun playIndex(index: Int) {
@@ -367,10 +371,12 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
     }
 
     private fun log(message: String) {
+        Log.d(TAG, message)
         onLog?.invoke(message)
     }
 
     companion object {
+        private const val TAG = "BiliMusicPlayer"
         private const val POLL_MS = 500L
         private const val MAX_LOST = 20
 

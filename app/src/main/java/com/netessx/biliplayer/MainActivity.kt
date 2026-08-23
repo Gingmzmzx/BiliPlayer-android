@@ -171,7 +171,12 @@ fun BiliPlayerApp() {
                                 uiState = uiState,
                                 showWebView = showWebView,
                                 onToggleWebView = { showWebView = !showWebView },
-                                onBack = { inMain = false }
+                                onBack = {
+                                    // 返回设置：停止播放、清空状态、停掉前台服务
+                                    PlayerController.stop()
+                                    PlayerService.stop(context)
+                                    inMain = false
+                                }
                             )
                         }
                     }

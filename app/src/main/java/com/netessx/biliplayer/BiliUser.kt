@@ -2,6 +2,7 @@ package com.netessx.biliplayer
 
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -33,12 +34,15 @@ class BiliUser(
         onError: (String) -> Unit,
     ) {
         var stage = 0 // 0=等待侧栏, 1=已打开等待内容
+        var sidebarWaitStarted = false
         contentWaitStarted = false
         log("开始抓取 UID=$uid 收藏夹=$favName")
         browser.onPageStarted = { _ -> browser.evaluate(STEALTH_JS) }
         browser.onPageFinished = { _ ->
             browser.evaluate(STEALTH_JS)
-            if (stage == 0) {
+            // onPageFinished 会触发多次，用 sidebarWaitStarted 保证只启动一次侧栏等待
+            if (stage == 0 && !sidebarWaitStarted) {
+                sidebarWaitStarted = true
                 log("页面已加载，等待收藏夹侧栏…")
                 waitForJs(
                     SIDEBAR_JS,
@@ -155,10 +159,12 @@ class BiliUser(
     private fun escapeCssAttr(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"")
 
     private fun log(message: String) {
+        Log.d(TAG, message)
         onLog(message)
     }
 
     companion object {
+        private const val TAG = "BiliUser"
         private const val POLL_MS = 500L
 
         private val SIDEBAR_JS =

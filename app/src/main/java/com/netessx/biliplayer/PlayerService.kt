@@ -85,5 +85,9 @@ class PlayerService : Service() {
                 context.startService(intent)
             }
         }
+
+        fun stop(context: Context) {
+            context.stopService(Intent(context, PlayerService::class.java))
+        }
     }
 }

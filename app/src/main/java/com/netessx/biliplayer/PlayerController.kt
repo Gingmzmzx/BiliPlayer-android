@@ -78,6 +78,25 @@ object PlayerController {
         )
     }
 
+    /** 停止播放并清空播放状态（返回设置时调用）。 */
+    fun stop() {
+        player?.stop()
+        player = null
+        _state.update {
+            it.copy(
+                playlist = emptyList(),
+                currentIndex = -1,
+                currentBvid = "",
+                currentTitle = "",
+                currentCover = "",
+                currentP = 0,
+                isPlaying = false,
+                currentTime = 0.0,
+                duration = 0.0,
+            )
+        }
+    }
+
     fun playPause() = player?.togglePause()
     fun next() = player?.next()
     fun prev() = player?.prev()

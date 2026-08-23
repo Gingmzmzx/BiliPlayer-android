@@ -1,0 +1,130 @@
+package com.netessx.biliplayer
+
+import android.content.Context
+import android.webkit.WebView
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
+
+/** 播放器对外 UI 状态。 */
+data class PlayerUiState(
+    val isFetching: Boolean = false,
+    val fetchError: String? = null,
+    val playlist: List<BiliTrack> = emptyList(),
+    val currentIndex: Int = -1,
+    val currentBvid: String = "",
+    val currentTitle: String = "",
+    val isPlaying: Boolean = false,
+    val currentTime: Double = 0.0,
+    val duration: Double = 0.0,
+    val volume: Int = 30,
+    val playMode: PlayMode = PlayMode.SHUFFLE,
+    val logLines: List<String> = emptyList(),
+)
+
+/**
+ * 播放器控制器单例：持有无头浏览器与播放引擎，向 Compose 暴露 [state]。
+ * 与前台服务同进程，由 [PlayerService] 负责保活后台播放。
+ */
+object PlayerController {
+
+    private lateinit var appContext: Context
+    private var browser: HeadlessBrowser? = null
+    private var player: BiliMusicPlayer? = null
+
+    private val _state = MutableStateFlow(PlayerUiState())
+    val state: StateFlow<PlayerUiState> = _state
+
+    private val _webView = MutableStateFlow<WebView?>(null)
+    val webView: StateFlow<WebView?> = _webView
+
+    fun init(context: Context) {
+        if (::appContext.isInitialized) return
+        appContext = context.applicationContext
+    }
+
+    /** 抓取收藏夹并开始播放（复刻 run.py：get_favlist -> BiliMusicPlayer.play）。 */
+    fun fetchAndStart(uid: String, favName: String) {
+        if (!::appContext.isInitialized) return
+        player?.stop()
+        player = null
+        val b = ensureBrowser()
+        _state.update {
+            it.copy(isFetching = true, fetchError = null, logLines = emptyList(), playlist = emptyList())
+        }
+        val user = BiliUser(b, onLog = { msg -> appendLog(msg) })
+        user.getFavlist(
+            uid = uid,
+            favName = favName,
+            onResult = { tracks ->
+                _state.update { it.copy(isFetching = false, playlist = tracks) }
+                if (tracks.isNotEmpty()) {
+                    startPlayer(tracks)
+                } else {
+                    _state.update { it.copy(fetchError = "收藏夹为空或不可见") }
+                }
+            },
+            onError = { e ->
+                _state.update { it.copy(isFetching = false, fetchError = e) }
+            },
+        )
+    }
+
+    fun playPause() = player?.togglePause()
+    fun next() = player?.next()
+    fun prev() = player?.prev()
+    fun seek(seconds: Double) = player?.seek(seconds)
+    fun setVolume(v: Int) = player?.requestVolume(v)
+    fun setPlayMode(mode: PlayMode) = player?.requestPlayMode(mode)
+    fun playIndex(i: Int) = player?.playIndex(i)
+
+    fun release() {
+        player = null
+        browser?.destroy()
+        browser = null
+        _webView.value = null
+    }
+
+    // ---------- 内部 ----------
+
+    fun ensureBrowser(): HeadlessBrowser {
+        return browser ?: HeadlessBrowser(appContext).also {
+            it.onLog = { msg -> appendLog(msg) }
+            it.ensureCreated()
+            browser = it
+            _webView.value = it.view()
+        }
+    }
+
+    private fun startPlayer(tracks: List<BiliTrack>) {
+        val p = BiliMusicPlayer(ensureBrowser()).apply {
+            playlist = tracks
+            volume = _state.value.volume
+            playMode = _state.value.playMode
+            onLog = { msg -> appendLog(msg) }
+            onStateUpdate = { syncState() }
+        }
+        player = p
+        p.start()
+    }
+
+    private fun syncState() {
+        val p = player ?: return
+        _state.update {
+            it.copy(
+                currentIndex = p.currentIndex,
+                currentBvid = p.currentBvid,
+                currentTitle = p.currentTitle,
+                isPlaying = p.isPlaying,
+                currentTime = p.currentTime,
+                duration = p.duration,
+                volume = p.volume,
+                playMode = p.playMode,
+            )
+        }
+    }
+
+    private fun appendLog(msg: String) {
+        _state.update { it.copy(logLines = (it.logLines + msg).takeLast(200)) }
+    }
+}

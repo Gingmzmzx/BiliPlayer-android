@@ -113,7 +113,7 @@ fun BiliPlayerApp() {
     val uiState by PlayerController.state.collectAsState()
     val webView by PlayerController.webView.collectAsState()
     var inMain by remember { mutableStateOf(false) }
-    var showWebView by remember { mutableStateOf(true) }
+    var showWebView by remember { mutableStateOf(false) }
     var currentTab by remember { mutableStateOf(AppTab.PLAYER) }
 
     // 申请通知权限（API 33+，用于前台服务通知）
@@ -218,8 +218,18 @@ private fun SetupScreen(uiState: PlayerUiState) {
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text("BiliPlayer", style = MaterialTheme.typography.headlineMedium)
-            Text("正在抓取收藏夹…", style = MaterialTheme.typography.titleLarge)
+            Text("正在抓取收藏夹… 请不要动上方画面", style = MaterialTheme.typography.titleLarge)
             LinearProgressIndicator(Modifier.fillMaxWidth())
+            uiState.fetchHint?.let { hint ->
+                Text(
+                    hint,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(8.dp))
+                        .padding(12.dp),
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
         }
         return
     }
@@ -277,7 +287,10 @@ private fun PlayerScreen(uiState: PlayerUiState, showWebView: Boolean, onToggleW
     val displayed = if (scrubbing) scrubValue else uiState.currentTime
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Row(
@@ -548,7 +561,7 @@ private fun AboutScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("BiliPlayer", style = MaterialTheme.typography.headlineMedium)
-        Text("用无头浏览器复现的 B 站音乐播放器", style = MaterialTheme.typography.bodyMedium)
+        Text("使用无头浏览器实现的 B 站音乐播放器", style = MaterialTheme.typography.bodyMedium)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("• 无头浏览器 = 离屏 WebView（桌面 UA）", style = MaterialTheme.typography.bodySmall)
@@ -558,13 +571,19 @@ private fun AboutScreen() {
             }
         }
         Text(
-            "参考项目：github.com/Gingmzmzx/BiliPlayer（Python）",
+            "相关项目：桌面端：https://github.com/Gingmzmzx/BiliPlayer（Python + Playwright）",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        Text(
+            "本项目开源地址：https://github.com/Gingmzmzx/BiliPlayer-android",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text("本项目是BiliPlayer的Android端实现，采用WebView并支持后台播放。由Gingmzmzx借助Claude Code开发", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.weight(1f))
         Text(
-            "v0.1 · 调试用",
+            "v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE}) · 调试用",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

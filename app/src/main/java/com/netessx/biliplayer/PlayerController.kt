@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.update
 data class PlayerUiState(
     val isFetching: Boolean = false,
     val fetchError: String? = null,
+    val fetchHint: String? = null,
     val playlist: List<BiliTrack> = emptyList(),
     val currentIndex: Int = -1,
     val currentBvid: String = "",
@@ -58,14 +59,18 @@ object PlayerController {
         player = null
         val b = ensureBrowser()
         _state.update {
-            it.copy(isFetching = true, fetchError = null, logLines = emptyList(), playlist = emptyList())
+            it.copy(isFetching = true, fetchError = null, fetchHint = null, logLines = emptyList(), playlist = emptyList())
         }
-        val user = BiliUser(b, onLog = { msg -> appendLog(msg) })
+        val user = BiliUser(
+            b,
+            onLog = { msg -> appendLog(msg) },
+            onHint = { h -> _state.update { it.copy(fetchHint = h) } },
+        )
         user.getFavlist(
             uid = uid,
             favName = favName,
             onResult = { tracks ->
-                _state.update { it.copy(isFetching = false, playlist = tracks) }
+                _state.update { it.copy(isFetching = false, fetchHint = null, playlist = tracks) }
                 if (tracks.isNotEmpty()) {
                     startPlayer(tracks)
                 } else {
@@ -73,7 +78,7 @@ object PlayerController {
                 }
             },
             onError = { e ->
-                _state.update { it.copy(isFetching = false, fetchError = e) }
+                _state.update { it.copy(isFetching = false, fetchHint = null, fetchError = e) }
             },
         )
     }

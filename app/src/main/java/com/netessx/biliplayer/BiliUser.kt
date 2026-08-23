@@ -22,10 +22,12 @@ data class BiliTrack(val bvid: String, val title: String = "", val cover: String
 class BiliUser(
     private val browser: HeadlessBrowser,
     private val onLog: (String) -> Unit = {},
+    private val onHint: (String) -> Unit = {},
 ) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var contentWaitStarted = false
+    private var manualHinted = false
 
     fun getFavlist(
         uid: String,
@@ -36,6 +38,7 @@ class BiliUser(
         var stage = 0 // 0=等待侧栏, 1=已打开等待内容
         var sidebarWaitStarted = false
         contentWaitStarted = false
+        manualHinted = false
         log("开始抓取 UID=$uid 收藏夹=$favName")
         browser.onPageStarted = { _ -> browser.evaluate(STEALTH_JS) }
         browser.onPageFinished = { _ ->
@@ -51,7 +54,11 @@ class BiliUser(
                         stage = 1
                         openFolder(uid, favName, onResult, onError)
                     },
-                    onTimeout = { onError("收藏夹列表加载超时（UID 不存在或页面加载失败）") },
+                    onTimeout = {
+                        hintManualClick(favName)
+                        stage = 1
+                        waitForContent(favName, onResult, onError)
+                    },
                 )
             } else if (stage == 1 && !contentWaitStarted) {
                 contentWaitStarted = true
@@ -91,17 +98,35 @@ class BiliUser(
             "return !!(el&&(el.textContent||'').indexOf(${json(favName)})>=0);})()"
         waitForJs(
             detailJs,
-            timeoutMs = 40000,
-            onReady = {
-                waitForJs(
-                    CARDS_JS,
-                    timeoutMs = 40000,
-                    onReady = { scrapeCards(onResult) },
-                    onTimeout = { onError("未找到收藏夹「$favName」或其内容为空") },
-                )
+            timeoutMs = 20000,
+            onReady = { waitForCards(favName, onResult, onError) },
+            onTimeout = {
+                // 提示用户手动点击收藏夹，然后继续等待（不结束抓取、不回到输入页）
+                hintManualClick(favName)
+                waitForContent(favName, onResult, onError)
             },
-            onTimeout = { onError("未找到收藏夹「$favName」或加载超时") },
         )
+    }
+
+    private fun waitForCards(favName: String, onResult: (List<BiliTrack>) -> Unit, onError: (String) -> Unit) {
+        waitForJs(
+            CARDS_JS,
+            timeoutMs = 20000,
+            onReady = { scrapeCards(onResult) },
+            onTimeout = {
+                log("未检测到视频卡片（收藏夹可能为空或未打开），请在上方页面确认后程序自动继续…")
+                waitForCards(favName, onResult, onError)
+            },
+        )
+    }
+
+    private fun hintManualClick(favName: String) {
+        if (!manualHinted) {
+            manualHinted = true
+            val msg = "自动点击未成功，请在上方 WebView 页面中手动点击收藏夹「$favName」，点击后程序会自动继续…"
+            log(msg)
+            onHint(msg)
+        }
     }
 
     private fun scrapeCards(onResult: (List<BiliTrack>) -> Unit) {

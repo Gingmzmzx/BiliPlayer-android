@@ -20,6 +20,9 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
     var playMode: PlayMode = PlayMode.SHUFFLE
     var volume: Int = 30
 
+    /** 返回指定 bvid 的偏好（分P/开始秒/结束秒），由 PlayerController 注入。 */
+    var getPreference: ((String) -> TrackPreference)? = null
+
     var onStateUpdate: (() -> Unit)? = null
     var onLog: ((String) -> Unit)? = null
 
@@ -28,6 +31,14 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
     var currentBvid: String = ""
         private set
     var currentTitle: String = ""
+        private set
+    var currentCover: String = ""
+        private set
+    var currentP: Int = 0
+        private set
+    var currentBeginTime: Int = 0
+        private set
+    var currentEndTime: Int = 0
         private set
     var isPlaying: Boolean = false
         private set
@@ -100,22 +111,63 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
     private fun loadCurrent() {
         stopPolling()
         val track = playlist[currentIndex]
+        val pref = getPreference?.invoke(track.bvid) ?: TrackPreference()
         currentBvid = track.bvid
         currentTitle = track.title
+        currentCover = track.cover
+        currentP = pref.p ?: 0
+        currentBeginTime = pref.beginTime ?: 0
+        currentEndTime = pref.endTime ?: 0
         currentTime = 0.0
         duration = 0.0
         isPlaying = false
         loadingVideo = true
         lostCount = 0
         emit()
-        log("播放第 ${currentIndex + 1}/${playlist.size}: $currentBvid")
+        log("播放第 ${currentIndex + 1}/${playlist.size}: $currentBvid${if (currentP > 0) "（第${currentP}P）" else ""}")
 
         browser.onPageFinished = { _ ->
             // 注入 stealth（尽力而为，仿照 python 的 init script）
             browser.evaluate(STEALTH_JS)
             waitForVideo()
         }
-        browser.load("https://www.bilibili.com/video/${track.bvid}")
+        val base = "https://www.bilibili.com/video/${track.bvid}"
+        val url = if (currentP > 0) "$base?p=$currentP" else base
+        browser.load(url)
+    }
+
+    /** 按当前歌曲重新加载（改分 P 等偏好后调用）。 */
+    fun reloadCurrent() {
+        if (playlist.isNotEmpty() && currentIndex in playlist.indices) {
+            loadCurrent()
+        }
+    }
+
+    /** 从播放列表删除指定项；删除当前项则跳到下一首。 */
+    fun removeAt(index: Int) {
+        if (index !in playlist.indices) return
+        val wasCurrent = index == currentIndex
+        playlist = playlist.toMutableList().also { it.removeAt(index) }
+        if (playlist.isEmpty()) {
+            stopPolling()
+            currentIndex = -1
+            currentBvid = ""
+            currentTitle = ""
+            currentCover = ""
+            currentP = 0
+            currentBeginTime = 0
+            currentEndTime = 0
+            isPlaying = false
+            emit()
+            return
+        }
+        if (wasCurrent) {
+            currentIndex = currentIndex.coerceAtMost(playlist.size - 1)
+            loadCurrent()
+        } else {
+            if (index < currentIndex) currentIndex -= 1
+            emit()
+        }
     }
 
     private fun waitForVideo() {
@@ -152,9 +204,15 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
             browser.evaluate(setupJs) { _ ->
                 // 注入防暂停/防弹窗/防自动连播
                 browser.evaluate(ANTI_PAUSE_JS) { _ ->
+                    // 若设置了开播秒（beginTime），跳到对应时间点
+                    if (currentBeginTime > 0) {
+                        browser.evaluate(
+                            "(function(){var v=document.querySelector('video');if(v)v.currentTime=${currentBeginTime};})()"
+                        )
+                    }
                     loadingVideo = false
                     isPlaying = true
-                    log("开始播放: $currentTitle ($currentBvid)")
+                    log("开始播放: $currentTitle ($currentBvid)${if (currentEndTime > 0) "（${currentEndTime}s 截断）" else ""}")
                     emit()
                     startPolling()
                 }
@@ -189,6 +247,13 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
                 currentTitle = t
             }
             emit()
+            // 自动截断（endTime）：到达结束时间即切下一首
+            if (currentEndTime > 0 && currentTime >= currentEndTime) {
+                log("到达结束时间 ${currentEndTime}s，自动切下一首")
+                stopPolling()
+                advanceTrack()
+                return
+            }
             if (ended || nearEnd) {
                 log("播放结束: $currentTitle")
                 stopPolling()
@@ -239,8 +304,10 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         browser.evaluate("(function(){var v=document.querySelector('video');return v?v.paused:true;})()") { raw ->
             val paused = raw.trim().equals("true", ignoreCase = true)
             browser.evaluate(
-                if (paused) "(function(){var v=document.querySelector('video');if(v)v.play();})()"
-                else "(function(){var v=document.querySelector('video');if(v)v.pause();})()"
+                if (paused)
+                    "(function(){window.__biliSetManualPause&&window.__biliSetManualPause(false);var v=document.querySelector('video');if(v)v.play();})()"
+                else
+                    "(function(){window.__biliSetManualPause&&window.__biliSetManualPause(true);var v=document.querySelector('video');if(v)v.pause();})()"
             )
         }
     }
@@ -356,6 +423,20 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
                   };
                 }
               }, 500);
+              // 6. 手动暂停标记（App 通过 window.__biliSetManualPause 设置）
+              window.__biliManualPause = false;
+              window.__biliSetManualPause = function(v){ window.__biliManualPause = !!v; };
+              // 7. 页面隐藏时拦截一切自动暂停；回到前台自动续播
+              var origPause = HTMLMediaElement.prototype.pause;
+              HTMLMediaElement.prototype.pause = function(){
+                if (document.hidden && !window.__biliManualPause) return;
+                return origPause.apply(this, arguments);
+              };
+              document.addEventListener('visibilitychange', function(){
+                if (document.hidden) return;
+                var v = document.querySelector('video');
+                if (!window.__biliManualPause && v && v.paused) { try { v.play(); } catch(e){} }
+              });
             })();
         """.trimIndent()
 

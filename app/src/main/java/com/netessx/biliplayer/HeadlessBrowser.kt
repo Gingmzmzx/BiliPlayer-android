@@ -41,7 +41,8 @@ class HeadlessBrowser(private val context: Context) {
             WebView.setWebContentsDebuggingEnabled(true)
         }
         log("创建无头 WebView（离屏、PC 端 UA）")
-        val web = WebView(context.applicationContext)
+        // 用 KeepVisibleWebView：切换后台/锁屏时 Chromium 仍认为窗口可见，避免浏览器层自动暂停媒体
+        val web = KeepVisibleWebView(context.applicationContext)
         web.apply {
             // 给无头 WebView 一个明确的桌面视口尺寸（不挂载到窗口也能拿到宽高）
             val w = View.MeasureSpec.makeMeasureSpec(VIEWPORT_WIDTH, View.MeasureSpec.EXACTLY)
@@ -126,8 +127,10 @@ class HeadlessBrowser(private val context: Context) {
                 return@evaluate
             }
             val web = webView ?: run { onDone(false); return@evaluate }
-            val x = obj.optDouble("x", 0.0).toFloat()
-            val y = obj.optDouble("y", 0.0).toFloat()
+            // getBoundingClientRect 返回 CSS 像素，dispatchTouchEvent 需要视图物理像素
+            val scale = web.scale
+            val x = obj.optDouble("x", 0.0).toFloat() * scale
+            val y = obj.optDouble("y", 0.0).toFloat() * scale
             val downTime = SystemClock.uptimeMillis()
             val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
             web.dispatchTouchEvent(down)
@@ -194,5 +197,17 @@ class HeadlessBrowser(private val context: Context) {
         const val DESKTOP_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+}
+
+/**
+ * 始终向 Chromium 上报"窗口可见"的 WebView 子类。
+ * 当 Activity 被切到后台/锁屏时，系统会把窗口可见性改为 GONE/INVISIBLE，
+ * 导致 WebContents 收到 WasHidden 而在浏览器层暂停媒体（页面 JS 无法拦截）。
+ * 这里强制上报 VISIBLE，让媒体在后台/锁屏时继续播放。
+ */
+private class KeepVisibleWebView(context: Context) : WebView(context) {
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(View.VISIBLE)
     }
 }

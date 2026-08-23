@@ -12,8 +12,11 @@ data class BiliTrack(val bvid: String, val title: String = "", val cover: String
 /**
  * 复刻 Python 项目 user.py：
  * 在无头浏览器中打开 `https://space.bilibili.com/{uid}/favlist?ftype=create`，
- * 点击目标收藏夹，抓取 `.bili-video-card` 卡片得到 {bvid, title, cover} 列表。
- * 完全基于 DOM 抓取，不请求任何 B 站 API。
+ * 打开目标收藏夹，抓取 `.bili-video-card` 卡片得到 {bvid, title, cover} 列表。
+ * 完全基于 DOM，不请求任何 B 站 API。
+ *
+ * 打开收藏夹优先方式：从侧栏元素直接提取 fid 并导航到 `?fid=...`（不依赖点击）；
+ * 提取不到时回退为真实触摸点击。
  */
 class BiliUser(
     private val browser: HeadlessBrowser,
@@ -21,6 +24,7 @@ class BiliUser(
 ) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var contentWaitStarted = false
 
     fun getFavlist(
         uid: String,
@@ -28,48 +32,72 @@ class BiliUser(
         onResult: (List<BiliTrack>) -> Unit,
         onError: (String) -> Unit,
     ) {
-        var started = false
+        var stage = 0 // 0=等待侧栏, 1=已打开等待内容
+        contentWaitStarted = false
         log("开始抓取 UID=$uid 收藏夹=$favName")
-        // 提前注入 stealth（尽力而为，仿照 python 的 init script）
         browser.onPageStarted = { _ -> browser.evaluate(STEALTH_JS) }
         browser.onPageFinished = { _ ->
             browser.evaluate(STEALTH_JS)
-            if (!started) {
-                started = true
+            if (stage == 0) {
                 log("页面已加载，等待收藏夹侧栏…")
                 waitForJs(
-                    "(function(){ return !!document.querySelector('.items') || !!document.querySelector('.fav-sidebar-item'); })()",
+                    SIDEBAR_JS,
                     timeoutMs = 40000,
-                    onReady = { clickFolder(favName, onResult, onError) },
+                    onReady = {
+                        stage = 1
+                        openFolder(uid, favName, onResult, onError)
+                    },
                     onTimeout = { onError("收藏夹列表加载超时（UID 不存在或页面加载失败）") },
                 )
+            } else if (stage == 1 && !contentWaitStarted) {
+                contentWaitStarted = true
+                waitForContent(favName, onResult, onError)
             }
         }
         browser.load("https://space.bilibili.com/$uid/favlist?ftype=create")
     }
 
-    private fun clickFolder(favName: String, onResult: (List<BiliTrack>) -> Unit, onError: (String) -> Unit) {
+    private fun openFolder(uid: String, favName: String, onResult: (List<BiliTrack>) -> Unit, onError: (String) -> Unit) {
         val selector = ".fav-sidebar-item[title=\"${escapeCssAttr(favName)}\"]"
-        browser.touchClick(selector) { found ->
-            log(if (found) "已点击收藏夹「$favName」，等待内容加载…" else "未找到收藏夹「$favName」，等待默认选中内容…")
-            // 无论是否点中（可能收藏夹已在默认选中态），都等待内容加载
-            val detailJs = "(function(){" +
-                "var el=document.querySelector('.favlist-info-detail__title-row');" +
-                "return !!(el&&(el.textContent||'').indexOf(${json(favName)})>=0);})()"
-            waitForJs(
-                detailJs,
-                timeoutMs = 40000,
-                onReady = {
-                    waitForJs(
-                        "(function(){return document.querySelectorAll('.bili-video-card').length>0;})()",
-                        timeoutMs = 40000,
-                        onReady = { scrapeCards(onResult) },
-                        onTimeout = { onError("未找到收藏夹「$favName」或其内容为空") },
-                    )
-                },
-                onTimeout = { onError("未找到收藏夹「$favName」或加载超时") },
-            )
+        browser.evaluate(EXTRACT_FID_JS(selector)) { raw ->
+            val obj = parseObj(raw)
+            if (obj != null && obj.optBoolean("found", false)) {
+                val fid = obj.optString("fid", "")
+                if (fid.isNotBlank()) {
+                    log("从侧栏提取到收藏夹 fid=$fid，直接导航打开…")
+                    // 导航会触发 onPageFinished -> stage==1 -> waitForContent
+                    browser.load("https://space.bilibili.com/$uid/favlist?fid=$fid&ftype=create")
+                    return@evaluate
+                }
+            }
+            log("未能提取 fid，尝试触摸点击…")
+            browser.touchClick(selector) { found ->
+                log(if (found) "已触摸点击收藏夹「$favName」" else "未在侧栏找到收藏夹「$favName」，等待默认内容…")
+                if (!contentWaitStarted) {
+                    contentWaitStarted = true
+                    waitForContent(favName, onResult, onError)
+                }
+            }
         }
+    }
+
+    private fun waitForContent(favName: String, onResult: (List<BiliTrack>) -> Unit, onError: (String) -> Unit) {
+        val detailJs = "(function(){" +
+            "var el=document.querySelector('.favlist-info-detail__title-row');" +
+            "return !!(el&&(el.textContent||'').indexOf(${json(favName)})>=0);})()"
+        waitForJs(
+            detailJs,
+            timeoutMs = 40000,
+            onReady = {
+                waitForJs(
+                    CARDS_JS,
+                    timeoutMs = 40000,
+                    onReady = { scrapeCards(onResult) },
+                    onTimeout = { onError("未找到收藏夹「$favName」或其内容为空") },
+                )
+            },
+            onTimeout = { onError("未找到收藏夹「$favName」或加载超时") },
+        )
     }
 
     private fun scrapeCards(onResult: (List<BiliTrack>) -> Unit) {
@@ -113,6 +141,15 @@ class BiliUser(
         }
     }
 
+    private fun parseObj(raw: String): JSONObject? {
+        return try {
+            val value = JSONTokener(raw).nextValue()
+            if (value is JSONObject) value else JSONObject(value.toString())
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private fun json(s: String): String = JSONObject.quote(s)
 
     private fun escapeCssAttr(s: String): String = s.replace("\\", "\\\\").replace("\"", "\\\"")
@@ -124,9 +161,31 @@ class BiliUser(
     companion object {
         private const val POLL_MS = 500L
 
+        private val SIDEBAR_JS =
+            "(function(){ return !!document.querySelector('.items') || !!document.querySelector('.fav-sidebar-item'); })()"
+
+        private val CARDS_JS =
+            "(function(){return document.querySelectorAll('.bili-video-card').length>0;})()"
+
+        private fun EXTRACT_FID_JS(selector: String): String = """
+            (function(){
+              var el = document.querySelector(${JSONObject.quote(selector)});
+              if (!el) return JSON.stringify({found:false});
+              var id = el.getAttribute('data-id') || el.getAttribute('data-fid') || '';
+              if (!id) {
+                var a = el.querySelector('a');
+                if (a) {
+                  var m = (a.href || '').match(/[?&]fid=(\d+)/);
+                  if (m) id = m[1];
+                }
+              }
+              if (!id) return JSON.stringify({found:false});
+              return JSON.stringify({found:true, fid:id});
+            })()
+        """.trimIndent()
+
         // 参考项目 resources/stealth.js，尽量模拟真实 Chrome。
-        // 每步独立 try/catch：WebView 中部分属性不可重定义（如 navigator.webdriver），
-        // 且脚本会随 onPageStarted/onPageFinished 重复注入，避免二次注入抛错中断后续补丁。
+        // 每步独立 try/catch：WebView 中部分属性不可重定义，且脚本会重复注入。
         private val STEALTH_JS = """
             (() => {
               function def(obj, key, value) {

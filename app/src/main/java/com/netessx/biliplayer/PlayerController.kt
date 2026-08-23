@@ -14,6 +14,8 @@ data class PlayerUiState(
     val currentIndex: Int = -1,
     val currentBvid: String = "",
     val currentTitle: String = "",
+    val currentCover: String = "",
+    val currentP: Int = 0,
     val isPlaying: Boolean = false,
     val currentTime: Double = 0.0,
     val duration: Double = 0.0,
@@ -41,6 +43,12 @@ object PlayerController {
     fun init(context: Context) {
         if (::appContext.isInitialized) return
         appContext = context.applicationContext
+        _state.update {
+            it.copy(
+                volume = Preferences.defaultVolume(appContext),
+                playMode = Preferences.playMode(appContext),
+            )
+        }
     }
 
     /** 抓取收藏夹并开始播放（复刻 run.py：get_favlist -> BiliMusicPlayer.play）。 */
@@ -74,8 +82,41 @@ object PlayerController {
     fun next() = player?.next()
     fun prev() = player?.prev()
     fun seek(seconds: Double) = player?.seek(seconds)
-    fun setVolume(v: Int) = player?.requestVolume(v)
-    fun setPlayMode(mode: PlayMode) = player?.requestPlayMode(mode)
+    fun setVolume(v: Int) {
+        Preferences.saveVolume(appContext, v)
+        player?.requestVolume(v)
+    }
+
+    fun setPlayMode(mode: PlayMode) {
+        Preferences.savePlayMode(appContext, mode)
+        player?.requestPlayMode(mode)
+    }
+
+    /** 设置当前歌曲的分 P 偏好（null = 默认第 1P），保存并重新加载。 */
+    fun setPPart(p: Int?) {
+        val bvid = player?.currentBvid ?: return
+        if (bvid.isBlank()) return
+        val existing = Preferences.preference(appContext, bvid)
+        Preferences.savePreference(appContext, bvid, existing.copy(p = p))
+        player?.reloadCurrent()
+    }
+
+    /** 设置列表中指定歌曲的完整偏好（分P/开始秒/结束秒）。 */
+    fun setTrackPreference(index: Int, pref: TrackPreference) {
+        val track = player?.playlist?.getOrNull(index) ?: return
+        Preferences.savePreference(appContext, track.bvid, pref)
+        if (index == player?.currentIndex) {
+            player?.reloadCurrent()
+        }
+    }
+
+    /** 删除播放列表中指定项（同时清理其已保存的偏好）。 */
+    fun removeTrack(index: Int) {
+        val track = player?.playlist?.getOrNull(index) ?: return
+        Preferences.clearPreference(appContext, track.bvid)
+        player?.removeAt(index)
+    }
+
     fun playIndex(i: Int) = player?.playIndex(i)
 
     fun release() {
@@ -101,6 +142,7 @@ object PlayerController {
             playlist = tracks
             volume = _state.value.volume
             playMode = _state.value.playMode
+            getPreference = { bvid -> Preferences.preference(appContext, bvid) }
             onLog = { msg -> appendLog(msg) }
             onStateUpdate = { syncState() }
         }
@@ -112,9 +154,12 @@ object PlayerController {
         val p = player ?: return
         _state.update {
             it.copy(
+                playlist = p.playlist,
                 currentIndex = p.currentIndex,
                 currentBvid = p.currentBvid,
                 currentTitle = p.currentTitle,
+                currentCover = p.currentCover,
+                currentP = p.currentP,
                 isPlaying = p.isPlaying,
                 currentTime = p.currentTime,
                 duration = p.duration,

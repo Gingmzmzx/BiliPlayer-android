@@ -154,7 +154,13 @@ class HeadlessBrowser(private val context: Context) {
               var el = document.querySelector(${JSONObject.quote(selector)});
               if (!el) return JSON.stringify({found:false});
               var r = el.getBoundingClientRect();
-              return JSON.stringify({found:true, x:r.left+r.width/2, y:r.top+r.height/2});
+              return JSON.stringify({
+                found:true,
+                x:r.left+r.width/2,
+                y:r.top+r.height/2,
+                vw:window.innerWidth||document.documentElement.clientWidth||1,
+                vh:window.innerHeight||document.documentElement.clientHeight||1
+              });
             })()
         """.trimIndent()
         evaluate(js) { raw ->
@@ -164,9 +170,15 @@ class HeadlessBrowser(private val context: Context) {
                 return@evaluate
             }
             val web = webView ?: run { onDone(false); return@evaluate }
-            val x = obj.optDouble("x", 0.0).toFloat()
-            val y = obj.optDouble("y", 0.0).toFloat()
-            log("touchElementCenter: ($x, $y)")
+            // 通用换算：viewPx = cssPx × (web物理尺寸 / 页面布局视口尺寸)，不同密度/缩放设备都正确
+            val vw = obj.optDouble("vw", 1.0)
+            val vh = obj.optDouble("vh", 1.0)
+            val scaleX = if (vw > 0 && web.width > 0) web.width / vw.toFloat() else 1f
+            val scaleY = if (vh > 0 && web.height > 0) web.height / vh.toFloat() else 1f
+            val x = obj.optDouble("x", 0.0).toFloat() * scaleX
+            val y = obj.optDouble("y", 0.0).toFloat() * scaleY
+            log("touchElementCenter: css=(${obj.optDouble("x", 0.0)},${obj.optDouble("y", 0.0)}) " +
+                "scale=($scaleX,$scaleY) view=($x,$y) viewport=($vw,$vh) web=(${web.width},${web.height})")
             val downTime = SystemClock.uptimeMillis()
             val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
             web.dispatchTouchEvent(down)

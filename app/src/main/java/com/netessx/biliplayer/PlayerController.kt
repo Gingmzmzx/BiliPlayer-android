@@ -156,6 +156,8 @@ object PlayerController {
         return browser ?: HeadlessBrowser(appContext).also {
             it.onLog = { msg -> appendLog(msg) }
             it.ensureCreated()
+            // 预热 WebView：先加载 about:blank 初始化 Chromium，避免首次真实加载慢导致抓取超时
+            it.load("about:blank")
             browser = it
             _webView.value = it.view()
         }

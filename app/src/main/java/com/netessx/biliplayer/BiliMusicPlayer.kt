@@ -24,6 +24,9 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
     /** 返回指定 bvid 的偏好（分P/开始秒/结束秒），由 PlayerController 注入。 */
     var getPreference: ((String) -> TrackPreference)? = null
 
+    /** 是否自动全屏（由 PlayerController 注入，读取 Preferences.autoFullscreen；null 视为开启）。 */
+    var autoFullscreen: (() -> Boolean)? = null
+
     var onStateUpdate: (() -> Unit)? = null
     var onLog: ((String) -> Unit)? = null
 
@@ -54,6 +57,10 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
     private var pollTick: Runnable? = null
     private var loadingVideo = false
     private var lostCount = 0
+    private var fullscreened = false
+    private var videoReadyHandled = false
+    private var resumePosition = 0.0
+    private var recoveryCount = 0
 
     // 待处理命令（对应 Python PlayState）
     private var pendingNext = false
@@ -86,6 +93,7 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
 
     fun playIndex(index: Int) {
         if (playlist.isEmpty()) return
+        resumePosition = 0.0 // 正常切歌不续播
         val i = ((index % playlist.size) + playlist.size) % playlist.size
         currentIndex = i
         loadCurrent()
@@ -134,6 +142,8 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         isPlaying = false
         loadingVideo = true
         lostCount = 0
+        fullscreened = false
+        videoReadyHandled = false
         emit()
         log("播放第 ${currentIndex + 1}/${playlist.size}: $currentBvid${if (currentP > 0) "（第${currentP}P）" else ""}")
 
@@ -201,6 +211,11 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
      * 避免第二次点击把全屏退掉。
      */
     private fun startWebFullscreen() {
+        // WebView 不可见（高度<=0）时全屏按钮坐标会落在折叠页面的错误位置（如首页按钮），直接跳过
+        if ((browser.view()?.height ?: 0) <= 0) {
+            log("WebView 不可见，跳过自动全屏")
+            return
+        }
         waitForJs(
             "(function(){var v=document.querySelector('video');return !!(v&&!v.paused&&v.currentTime>0.5);})()",
             timeoutMs = 20000,
@@ -209,10 +224,12 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
                     "(function(){ return !!document.querySelector('.bpx-player-ctrl-web'); })()",
                     timeoutMs = 10000,
                     onReady = {
+                        // 仅当 WebView 可见（高度>0）时记录已全屏；隐藏时点击无效则不标记，便于手动显示时补全屏
+                        if ((browser.view()?.height ?: 0) > 0) fullscreened = true
                         // 诊断：打印元素状态，便于定位 evaluateJavascript 与 DevTools 差异
-                        browser.evaluate(DEBUG_FULLSCREEN_JS) { raw ->
-                            log("全屏诊断: $raw")
-                        }
+//                        browser.evaluate(DEBUG_FULLSCREEN_JS) { raw ->
+//                            log("全屏诊断: $raw")
+//                        }
                         // 真实触摸点击（提供可信用户手势，解决 evaluateJavascript 无手势失效问题）
                         browser.touchElementCenter(".bpx-player-ctrl-web") { found ->
                             log(if (found) "已真实触摸点击全屏按钮" else "未找到全屏按钮")
@@ -221,7 +238,7 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
                         mainHandler.postDelayed({
                             browser.evaluate(HIDE_CONTROLS_JS)
                             log("已隐藏播放器控制条")
-                        }, 3000)
+                        }, 1500)
                     },
                     onTimeout = { log("等待网页全屏按钮超时") },
                 )
@@ -230,7 +247,18 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         )
     }
 
+    /** 手动触发现场全屏（用户在 UI 上"显示 WebView"时调用）；已全屏过则不重复点击。 */
+    fun enterWebFullscreen() {
+        if (!fullscreened && playlist.isNotEmpty()) {
+            log("手动触发网页全屏")
+            startWebFullscreen()
+        }
+    }
+
     private fun onVideoReady() {
+        // onPageFinished 会触发多次，这里保证每首歌只执行一次初始化/全屏逻辑
+        if (videoReadyHandled) return
+        videoReadyHandled = true
         // 读取标题
         browser.evaluate("(function(){var h=document.querySelector('h1');return h?h.innerText:'';})()") { rawTitle ->
             val t = unwrapString(rawTitle)
@@ -257,8 +285,18 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
                             "(function(){var v=document.querySelector('video');if(v)v.currentTime=${currentBeginTime};})()"
                         )
                     }
-                    // 全屏：点击"网页全屏"按钮，并轮询确认是否真的进入全屏，失败则重试
-                    startWebFullscreen()
+                    // 视频状态丢失后恢复：续播到上次位置
+                    if (resumePosition > 0) {
+                        browser.evaluate(
+                            "(function(){var v=document.querySelector('video');if(v)v.currentTime=${resumePosition};})()"
+                        )
+                        log("恢复续播: ${resumePosition}秒")
+                        resumePosition = 0.0
+                    }
+                    // 仅当"自动全屏"开启时执行全屏并隐藏控制条
+                    if (autoFullscreen?.invoke() != false) {
+                        startWebFullscreen()
+                    }
                     loadingVideo = false
                     isPlaying = true
                     log("开始播放: $currentTitle ($currentBvid)${if (currentEndTime > 0) "（${currentEndTime}s 截断）" else ""}")
@@ -286,6 +324,7 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         val obj = parseJsonObj(raw)
         if (obj != null && obj.optBoolean("ok", false)) {
             lostCount = 0
+            recoveryCount = 0
             currentTime = obj.optDouble("currentTime", currentTime)
             duration = obj.optDouble("duration", duration)
             isPlaying = !obj.optBoolean("paused", false)
@@ -312,10 +351,25 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
             mainHandler.postDelayed(self, POLL_MS)
         } else {
             if (++lostCount >= MAX_LOST) {
-                log("视频状态丢失，停止轮询")
+                // 视频状态丢失：自动重载网页恢复播放，尽量续播到上次位置
+                if (++recoveryCount > MAX_RECOVERY) {
+                    log("多次恢复失败，停止轮询")
+                    return
+                }
+                recoverFromLoss()
                 return
             }
             mainHandler.postDelayed(self, POLL_MS)
+        }
+    }
+
+    /** 视频状态丢失后自动重载当前视频，并记录上次位置以便续播。 */
+    private fun recoverFromLoss() {
+        val lastPos = currentTime
+        log("视频状态丢失，自动重新加载${if (lastPos > 0) "（从 ${lastPos} 秒续播）" else ""}")
+        resumePosition = lastPos
+        if (playlist.isNotEmpty() && currentIndex in playlist.indices) {
+            loadCurrent()
         }
     }
 
@@ -444,6 +498,7 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         private const val TAG = "BiliMusicPlayer"
         private const val POLL_MS = 500L
         private const val MAX_LOST = 20
+        private const val MAX_RECOVERY = 3
 
         private val STEALTH_JS = """
             (() => {

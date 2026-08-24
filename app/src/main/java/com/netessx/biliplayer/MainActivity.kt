@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
@@ -77,6 +78,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.LinkAnnotation
@@ -94,6 +96,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.netessx.biliplayer.ui.theme.BiliPlayerTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
@@ -123,7 +126,7 @@ fun BiliPlayerApp() {
     val uiState by PlayerController.state.collectAsState()
     val webView by PlayerController.webView.collectAsState()
     var inMain by remember { mutableStateOf(false) }
-    var showWebView by remember { mutableStateOf(true) }
+    var showWebView by remember { mutableStateOf(Preferences.autoFullscreen(context)) }
     var currentTab by remember { mutableStateOf(AppTab.PLAYER) }
 
     // 申请通知权限（API 33+，用于前台服务通知）
@@ -141,6 +144,19 @@ fun BiliPlayerApp() {
     // 抓取成功后进入主界面；"返回设置"后需重新抓取才再次进入
     LaunchedEffect(uiState.isFetching) {
         if (!uiState.isFetching && uiState.playlist.isNotEmpty()) inMain = true
+    }
+
+    // 进入主界面时按"自动全屏"偏好决定默认显示 WebView 还是封面
+    LaunchedEffect(inMain) {
+        if (inMain) showWebView = Preferences.autoFullscreen(context)
+    }
+
+    // 手动"显示 WebView"后，等 WebView 完成布局（高度>0）再补全屏，避免高度仍为 0 导致坐标误点
+    LaunchedEffect(showWebView) {
+        if (showWebView) {
+            delay(500)
+            PlayerController.enterFullscreen()
+        }
     }
 
     // 设置页仅在抓取期间显示 WebView（保证收藏夹页面能渲染出侧栏/卡片）；平时隐藏避免挤压表单
@@ -202,18 +218,37 @@ fun BiliPlayerApp() {
             // WebView 始终挂载（设置页/播放页占用顶部空间，其余页高度为 0）
             val wv = webView
             if (wv != null) {
-                AndroidView(
-                    factory = { wv },
-                    update = {
-                        it.translationX = 0f
-                        it.translationY = 0f
-                        it.alpha = if (showWebPanel) 1f else 0f
-                    },
-                    modifier = Modifier
+                Box(
+                    Modifier
                         .fillMaxWidth()
                         .align(Alignment.TopCenter)
                         .height(if (showWebPanel) 240.dp else 0.dp)
-                )
+                ) {
+                    AndroidView(
+                        factory = { wv },
+                        update = {
+                            it.translationX = 0f
+                            it.translationY = 0f
+                            it.alpha = if (showWebPanel) 1f else 0f
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    if (inMain && showWebPanel) {
+                        // 透明触摸拦截层：仅在主界面屏蔽用户点击/滑动（抓取收藏夹阶段不屏蔽，便于手动介入）
+                        // 自动化 dispatchTouchEvent 直连 WebView，不受影响
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .pointerInput(Unit) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            awaitPointerEvent().changes.forEach { it.consume() }
+                                        }
+                                    }
+                                }
+                        )
+                    }
+                }
             }
         }
     }
@@ -247,6 +282,7 @@ private fun SetupScreen(uiState: PlayerUiState) {
     val context = LocalContext.current
     var uid by remember { mutableStateOf(Preferences.uid(context)) }
     var favName by remember { mutableStateOf(Preferences.favName(context)) }
+    var autoFullscreen by remember { mutableStateOf(Preferences.autoFullscreen(context)) }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -271,10 +307,18 @@ private fun SetupScreen(uiState: PlayerUiState) {
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = autoFullscreen,
+                onCheckedChange = { autoFullscreen = it }
+            )
+            Text("自动全屏并隐藏控制条（不勾选则显示封面）", style = MaterialTheme.typography.bodyMedium)
+        }
         Button(
             onClick = {
                 PlayerController.init(context)
                 Preferences.saveIdentity(context, uid.trim(), favName.trim())
+                Preferences.saveAutoFullscreen(context, autoFullscreen)
                 PlayerService.start(context)
                 PlayerController.fetchAndStart(uid.trim(), favName.trim())
             },

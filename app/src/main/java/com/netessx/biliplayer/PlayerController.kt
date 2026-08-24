@@ -143,6 +143,9 @@ object PlayerController {
 
     fun playIndex(i: Int) = player?.playIndex(i)
 
+    /** 手动触发网页全屏（用户"显示 WebView"时调用）。 */
+    fun enterFullscreen() = player?.enterWebFullscreen()
+
     fun release() {
         player = null
         browser?.destroy()
@@ -169,6 +172,7 @@ object PlayerController {
             volume = _state.value.volume
             playMode = _state.value.playMode
             getPreference = { bvid -> Preferences.preference(appContext, bvid) }
+            autoFullscreen = { Preferences.autoFullscreen(appContext) }
             onLog = { msg -> appendLog(msg) }
             onStateUpdate = { syncState() }
         }

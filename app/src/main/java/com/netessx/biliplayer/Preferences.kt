@@ -12,6 +12,7 @@ object Preferences {
     private const val KEY_VOLUME = "default_volume"
     private const val KEY_PLAY_MODE = "play_mode"
     private const val KEY_P_PREF = "p_pref"
+    private const val KEY_AUTO_FULLSCREEN = "auto_fullscreen"
 
     private fun sp(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -39,6 +40,12 @@ object Preferences {
 
     fun savePlayMode(context: Context, mode: PlayMode) {
         sp(context).edit().putString(KEY_PLAY_MODE, mode.name).apply()
+    }
+
+    // ----- 自动全屏 -----
+    fun autoFullscreen(context: Context): Boolean = sp(context).getBoolean(KEY_AUTO_FULLSCREEN, true)
+    fun saveAutoFullscreen(context: Context, v: Boolean) {
+        sp(context).edit().putBoolean(KEY_AUTO_FULLSCREEN, v).apply()
     }
 
     // ----- 每首歌的偏好（bvid -> {p, beginTime, endTime}） -----

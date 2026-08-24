@@ -144,6 +144,43 @@ class HeadlessBrowser(private val context: Context) {
         }
     }
 
+    /**
+     * 取 [selector] 元素当前视口中心坐标，并派发真实触摸（DOWN + UP）。
+     * 真实触摸是可信用户手势，可触发需要 activation 的页面交互（如全屏）。
+     */
+    fun touchElementCenter(selector: String, onDone: (Boolean) -> Unit) {
+        val js = """
+            (function(){
+              var el = document.querySelector(${JSONObject.quote(selector)});
+              if (!el) return JSON.stringify({found:false});
+              var r = el.getBoundingClientRect();
+              return JSON.stringify({found:true, x:r.left+r.width/2, y:r.top+r.height/2});
+            })()
+        """.trimIndent()
+        evaluate(js) { raw ->
+            val obj = parseJsResult(raw)
+            if (obj == null || !obj.optBoolean("found", false)) {
+                onDone(false)
+                return@evaluate
+            }
+            val web = webView ?: run { onDone(false); return@evaluate }
+            val x = obj.optDouble("x", 0.0).toFloat()
+            val y = obj.optDouble("y", 0.0).toFloat()
+            log("touchElementCenter: ($x, $y)")
+            val downTime = SystemClock.uptimeMillis()
+            val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
+            web.dispatchTouchEvent(down)
+            down.recycle()
+            mainHandler.postDelayed({
+                val upTime = SystemClock.uptimeMillis()
+                val up = MotionEvent.obtain(downTime, upTime, MotionEvent.ACTION_UP, x, y, 0)
+                web.dispatchTouchEvent(up)
+                up.recycle()
+                onDone(true)
+            }, 80)
+        }
+    }
+
     private fun parseJsResult(raw: String): JSONObject? {
         return try {
             val value = JSONTokener(raw).nextValue()

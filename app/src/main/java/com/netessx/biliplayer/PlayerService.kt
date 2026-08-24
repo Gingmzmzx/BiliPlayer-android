@@ -8,11 +8,12 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.MediaMetadata
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
-import androidx.core.app.NotificationCompat
-import androidx.media.app.NotificationCompat.MediaStyle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -25,11 +26,12 @@ import kotlinx.coroutines.launch
 /**
  * 前台播放服务：持有 [PlayerController]（内含无头 WebView 与播放引擎），
  * 通过 mediaPlayback 前台服务让音频在应用退到后台后继续播放。
- * 通知带媒体控制（上一首 / 播放暂停 / 下一首），并随播放状态更新。
+ * 注册 MediaSession 以支持锁屏/蓝牙媒体控制，通知带媒体动作并随播放状态更新。
  */
 class PlayerService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private var mediaSession: MediaSession? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var notifJob: Job? = null
 
@@ -38,17 +40,61 @@ class PlayerService : Service() {
         createChannel()
         PlayerController.init(applicationContext)
         acquireWakeLock()
+        createMediaSession()
         startForegroundCompat()
-        // 监听播放状态变化，更新通知（播放/暂停图标、标题）
+        // 监听播放状态变化，更新通知与 MediaSession（锁屏/蓝牙控制、标题、播放状态）
         notifJob = scope.launch {
             PlayerController.state
-                .map { it.isPlaying to it.currentTitle }
+                .map { Triple(it.isPlaying, it.currentTitle, it.currentBvid) }
                 .distinctUntilChanged()
-                .collect { (playing, title) ->
+                .collect { (playing, title, bvid) ->
+                    updateMediaSession(playing, title, bvid)
                     val nm = getSystemService(NotificationManager::class.java)
                     nm.notify(NOTIF_ID, buildNotification(playing, title))
                 }
         }
+    }
+
+    private fun createMediaSession() {
+        mediaSession = MediaSession(this, "PlayerService").apply {
+            setCallback(object : MediaSession.Callback() {
+                override fun onPlay() {
+                    if (!PlayerController.state.value.isPlaying) PlayerController.playPause()
+                }
+
+                override fun onPause() {
+                    if (PlayerController.state.value.isPlaying) PlayerController.playPause()
+                }
+
+                override fun onSkipToNext() { PlayerController.next() }
+                override fun onSkipToPrevious() { PlayerController.prev() }
+            })
+            isActive = true
+        }
+    }
+
+    private fun updateMediaSession(isPlaying: Boolean, title: String, bvid: String) {
+        val state = PlaybackState.Builder()
+            .setActions(
+                PlaybackState.ACTION_PLAY or
+                    PlaybackState.ACTION_PAUSE or
+                    PlaybackState.ACTION_PLAY_PAUSE or
+                    PlaybackState.ACTION_SKIP_TO_NEXT or
+                    PlaybackState.ACTION_SKIP_TO_PREVIOUS
+            )
+            .setState(
+                if (isPlaying) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
+                PlayerController.state.value.currentTime.toLong(),
+                1f
+            )
+            .build()
+        val metadata = MediaMetadata.Builder()
+            .putString(MediaMetadata.METADATA_KEY_TITLE, title.ifBlank { "BiliPlayer" })
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, "BiliPlayer")
+            .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, bvid)
+            .build()
+        mediaSession?.setPlaybackState(state)
+        mediaSession?.setMetadata(metadata)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -66,6 +112,8 @@ class PlayerService : Service() {
     override fun onDestroy() {
         notifJob?.cancel()
         scope.cancel()
+        mediaSession?.release()
+        mediaSession = null
         wakeLock?.takeIf { it.isHeld }?.release()
         wakeLock = null
         PlayerController.release()
@@ -116,13 +164,19 @@ class PlayerService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_media_play)
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+        return builder
+            .setSmallIcon(if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play)
             .setContentTitle("BiliPlayer")
             .setContentText(title.ifBlank { "后台播放中" })
             .setContentIntent(contentIntent)
             .setOngoing(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
             .addAction(android.R.drawable.ic_media_previous, "上一首", prevIntent)
             .addAction(
                 if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
@@ -130,7 +184,11 @@ class PlayerService : Service() {
                 ppIntent
             )
             .addAction(android.R.drawable.ic_media_next, "下一首", nextIntent)
-            .setStyle(MediaStyle().setShowActionsInCompactView(0, 1, 2))
+            .setStyle(
+                Notification.MediaStyle()
+                    .setMediaSession(mediaSession?.sessionToken)
+                    .setShowActionsInCompactView(0, 1, 2)
+            )
             .build()
     }
 

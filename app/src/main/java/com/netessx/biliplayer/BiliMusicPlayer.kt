@@ -187,6 +187,41 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         )
     }
 
+    /**
+     * 等视频真正播放、播放器就绪后，点击"网页全屏"按钮一次。
+     * 注意：网页全屏是 toggle（点一次进、再点一次退），所以只点一次、绝不重试，
+     * 避免第二次点击把全屏退掉。
+     */
+    private fun startWebFullscreen() {
+        waitForJs(
+            "(function(){var v=document.querySelector('video');return !!(v&&!v.paused&&v.currentTime>0.5);})()",
+            timeoutMs = 20000,
+            onReady = {
+                waitForJs(
+                    "(function(){ return !!document.querySelector('.bpx-player-ctrl-web'); })()",
+                    timeoutMs = 10000,
+                    onReady = {
+                        // 诊断：打印元素状态，便于定位 evaluateJavascript 与 DevTools 差异
+                        browser.evaluate(DEBUG_FULLSCREEN_JS) { raw ->
+                            log("全屏诊断: $raw")
+                        }
+                        // 真实触摸点击（提供可信用户手势，解决 evaluateJavascript 无手势失效问题）
+                        browser.touchElementCenter(".bpx-player-ctrl-web") { found ->
+                            log(if (found) "已真实触摸点击全屏按钮" else "未找到全屏按钮")
+                        }
+                        // 点击已生效（touch 点击可靠），全屏后直接隐藏控制条/顶部栏
+                        mainHandler.postDelayed({
+                            browser.evaluate(HIDE_CONTROLS_JS)
+                            log("已隐藏播放器控制条")
+                        }, 3000)
+                    },
+                    onTimeout = { log("等待网页全屏按钮超时") },
+                )
+            },
+            onTimeout = { log("等待视频播放超时") },
+        )
+    }
+
     private fun onVideoReady() {
         // 读取标题
         browser.evaluate("(function(){var h=document.querySelector('h1');return h?h.innerText:'';})()") { rawTitle ->
@@ -214,6 +249,8 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
                             "(function(){var v=document.querySelector('video');if(v)v.currentTime=${currentBeginTime};})()"
                         )
                     }
+                    // 全屏：点击"网页全屏"按钮，并轮询确认是否真的进入全屏，失败则重试
+                    startWebFullscreen()
                     loadingVideo = false
                     isPlaying = true
                     log("开始播放: $currentTitle ($currentBvid)${if (currentEndTime > 0) "（${currentEndTime}s 截断）" else ""}")
@@ -444,6 +481,58 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
                 if (!window.__biliManualPause && v && v.paused) { try { v.play(); } catch(e){} }
               });
             })();
+        """.trimIndent()
+
+        private const val MAX_FULLSCREEN_RETRY = 10
+
+        /** 隐藏播放器控制条与顶部栏。 */
+        private val HIDE_CONTROLS_JS = """
+            (function(){
+              document.querySelectorAll('.bpx-player-control-wrap, .bpx-player-top-wrap').forEach(function(el){ el.style.display = 'none'; });
+              return 'hidden';
+            })()
+        """.trimIndent()
+
+        /** 诊断：打印网页全屏按钮的可见性/位置/是否在 shadow DOM、isWebFullscreen 是否存在。 */
+        private val DEBUG_FULLSCREEN_JS = """
+            (function(){
+              var el = document.querySelector('.bpx-player-ctrl-web');
+              var info = {found: !!el};
+              if (el) {
+                var r = el.getBoundingClientRect();
+                var cs = window.getComputedStyle(el);
+                info.rect = {x:Math.round(r.x), y:Math.round(r.y), w:Math.round(r.width), h:Math.round(r.height)};
+                info.display = cs.display;
+                info.visibility = cs.visibility;
+                info.pointerEvents = cs.pointerEvents;
+                info.offsetParent = !!el.offsetParent;
+              }
+              info.isWebFullscreen = !!(window.player && typeof window.player.isWebFullscreen === 'function');
+              function findShadows(selector, root) {
+                if (root.querySelector(selector)) return true;
+                var all = root.querySelectorAll('*');
+                for (var i=0;i<all.length;i++) {
+                  var n = all[i];
+                  if (n.shadowRoot && findShadows(selector, n.shadowRoot)) return true;
+                }
+                return false;
+              }
+              info.shadowFound = findShadows('.bpx-player-ctrl-web', document);
+              return JSON.stringify(info);
+            })()
+        """.trimIndent()
+
+        private val IS_WEB_FULLSCREEN_JS = """
+            (function(){
+              var p = window.player;
+              if (p && typeof p.isWebFullscreen === 'function') return p.isWebFullscreen() ? 'yes' : 'no';
+              var c = document.querySelector('.bpx-player-container');
+              if (c) {
+                var cls = c.className || '';
+                if (cls.indexOf('web-fullscreen') >= 0 || cls.indexOf('fullscreen') >= 0) return 'yes';
+              }
+              return 'unknown';
+            })()
         """.trimIndent()
 
         private val GET_STATE_JS = """

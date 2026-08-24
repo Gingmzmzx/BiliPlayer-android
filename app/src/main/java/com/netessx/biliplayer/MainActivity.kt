@@ -123,7 +123,7 @@ fun BiliPlayerApp() {
     val uiState by PlayerController.state.collectAsState()
     val webView by PlayerController.webView.collectAsState()
     var inMain by remember { mutableStateOf(false) }
-    var showWebView by remember { mutableStateOf(false) }
+    var showWebView by remember { mutableStateOf(true) }
     var currentTab by remember { mutableStateOf(AppTab.PLAYER) }
 
     // 申请通知权限（API 33+，用于前台服务通知）

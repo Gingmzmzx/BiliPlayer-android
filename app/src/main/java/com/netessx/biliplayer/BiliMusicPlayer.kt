@@ -50,6 +50,7 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val random = Random()
+    private val shuffleQueue = mutableListOf<Int>()
     private var pollTick: Runnable? = null
     private var loadingVideo = false
     private var lostCount = 0
@@ -65,7 +66,13 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
             log("播放列表为空")
             return
         }
-        playIndex(0)
+        // 随机模式：用无重复洗牌队列，随机选起始曲目；其它模式从第 1 首开始
+        if (playMode == PlayMode.SHUFFLE) {
+            shuffleQueue.clear()
+            playIndex(shuffleNext())
+        } else {
+            playIndex(0)
+        }
     }
 
     /** 停止播放：停止轮询并暂停当前视频。 */
@@ -152,6 +159,7 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         if (index !in playlist.indices) return
         val wasCurrent = index == currentIndex
         playlist = playlist.toMutableList().also { it.removeAt(index) }
+        shuffleQueue.clear() // 播放列表变化后重建洗牌队列，避免索引错位
         if (playlist.isEmpty()) {
             stopPolling()
             currentIndex = -1
@@ -358,9 +366,29 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         val nextIndex = when (playMode) {
             PlayMode.REPEAT_ONE -> currentIndex
             PlayMode.SEQUENTIAL -> (currentIndex + 1) % playlist.size
-            PlayMode.SHUFFLE -> random.nextInt(playlist.size)
+            PlayMode.SHUFFLE -> shuffleNext()
         }
         playIndex(nextIndex)
+    }
+
+    /**
+     * 返回下一个不重复的随机曲目索引。
+     * 用一份洗牌好的索引队列顺序播放；整轮播完后重建队列（并把当前曲目放到最后，
+     * 避免跨轮立刻重复当前曲）。
+     */
+    private fun shuffleNext(): Int {
+        if (shuffleQueue.isEmpty()) {
+            val indices = (0 until playlist.size).toMutableList()
+            if (playlist.size > 1 && currentIndex in indices) {
+                indices.remove(currentIndex)
+                indices.shuffle()
+                indices.add(currentIndex)
+            } else {
+                indices.shuffle()
+            }
+            shuffleQueue.addAll(indices)
+        }
+        return shuffleQueue.removeAt(0)
     }
 
     private fun waitForJs(conditionJs: String, timeoutMs: Long, onReady: () -> Unit, onTimeout: () -> Unit) {

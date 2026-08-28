@@ -1,6 +1,7 @@
 package com.netessx.biliplayer
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -8,6 +9,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.webkit.CookieManager
+import android.webkit.WebView
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -129,6 +132,7 @@ fun BiliPlayerApp() {
     var inMain by remember { mutableStateOf(false) }
     var showWebView by remember { mutableStateOf(Preferences.autoFullscreen(context)) }
     var currentTab by remember { mutableStateOf(AppTab.PLAYER) }
+    var showLogin by remember { mutableStateOf(false) }
 
     // 申请通知权限（API 33+，用于前台服务通知）
     val notifPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -184,12 +188,20 @@ fun BiliPlayerApp() {
         }
     ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
-            if (!inMain) {
-                Column(Modifier.fillMaxSize()) {
-                    Spacer(Modifier.height(if (showWebPanel) 240.dp else 0.dp))
-                    Box(Modifier.weight(1f)) { SetupScreen(uiState = uiState) }
+            when {
+                showLogin -> LoginScreen(onBack = { showLogin = false })
+                !inMain -> {
+                    Column(Modifier.fillMaxSize()) {
+                        Spacer(Modifier.height(if (showWebPanel) 240.dp else 0.dp))
+                        Box(Modifier.weight(1f)) {
+                            SetupScreen(
+                                uiState = uiState,
+                                onLoginClick = { showLogin = true }
+                            )
+                        }
+                    }
                 }
-            } else {
+                else -> {
                 when (currentTab) {
                     AppTab.PLAYER -> Column(Modifier.fillMaxSize()) {
                         Spacer(Modifier.height(if (showWebPanel) 240.dp else 0.dp))
@@ -213,6 +225,7 @@ fun BiliPlayerApp() {
                     })
                     AppTab.LOG -> LogScreen(uiState)
                     AppTab.ABOUT -> AboutScreen()
+                }
                 }
             }
 
@@ -256,7 +269,7 @@ fun BiliPlayerApp() {
 }
 
 @Composable
-private fun SetupScreen(uiState: PlayerUiState) {
+private fun SetupScreen(uiState: PlayerUiState, onLoginClick: () -> Unit) {
     // 抓取中：显示加载提示（WebView 面板在顶部由外层布局展示）
     if (uiState.isFetching) {
         Column(
@@ -315,6 +328,17 @@ private fun SetupScreen(uiState: PlayerUiState) {
             )
             Text("自动全屏并隐藏控制条（不勾选则显示封面）", style = MaterialTheme.typography.bodyMedium)
         }
+        OutlinedButton(
+            onClick = onLoginClick,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("登录 B 站（可选）")
+        }
+        Text(
+            "登录后可以访问私密收藏夹，解锁其他功能。登录状态会保存在 WebView 中，本软件将不会将相关 Cookie 上传至任何第三方服务器。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         Button(
             onClick = {
                 PlayerController.init(context)
@@ -331,6 +355,46 @@ private fun SetupScreen(uiState: PlayerUiState) {
         uiState.fetchError?.let {
             Text("错误: $it", color = MaterialTheme.colorScheme.error)
         }
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun LoginScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = {
+                CookieManager.getInstance().flush()
+                onBack()
+            }) { Text("← 返回") }
+            Text("登录 B 站", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.width(48.dp))
+        }
+        Text(
+            "请在下方页面登录 B 站账号，登录完成后点击「返回」",
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        AndroidView(
+            factory = { ctx ->
+                val wv = WebView(ctx)
+                wv.webViewClient = object : android.webkit.WebViewClient() {}
+                wv.settings.javaScriptEnabled = true
+                wv.settings.domStorageEnabled = true
+                wv.settings.userAgentString = HeadlessBrowser.DESKTOP_USER_AGENT
+                CookieManager.getInstance().setAcceptCookie(true)
+                CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
+                wv.loadUrl("https://www.bilibili.com/")
+                wv
+            },
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 

@@ -20,6 +20,8 @@ data class PlayerUiState(
     val isFetching: Boolean = false,
     val fetchError: String? = null,
     val fetchHint: String? = null,
+    val paginationInfo: String? = null,
+    val fetchProgress: Float = 0f,
     val playlist: List<BiliTrack> = emptyList(),
     val currentIndex: Int = -1,
     val currentBvid: String = "",
@@ -107,12 +109,14 @@ object PlayerController {
         player = null
         val b = ensureBrowser()
         _state.update {
-            it.copy(isFetching = true, fetchError = null, fetchHint = null, logLines = emptyList(), playlist = emptyList())
+            it.copy(isFetching = true, fetchError = null, fetchHint = null, paginationInfo = null, fetchProgress = 0f, logLines = emptyList(), playlist = emptyList())
         }
         val user = BiliUser(
             b,
             onLog = { msg -> appendLog(msg) },
             onHint = { h -> _state.update { it.copy(fetchHint = h) } },
+            onProgress = { info -> _state.update { it.copy(paginationInfo = info) } },
+            onFetchProgress = { p -> _state.update { it.copy(fetchProgress = p) } },
         )
         user.getFavlist(
             uid = uid,

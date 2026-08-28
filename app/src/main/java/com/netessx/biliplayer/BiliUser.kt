@@ -23,12 +23,17 @@ class BiliUser(
     private val browser: HeadlessBrowser,
     private val onLog: (String) -> Unit = {},
     private val onHint: (String) -> Unit = {},
+    private val onProgress: (String) -> Unit = {},
+    private val onFetchProgress: (Float) -> Unit = {},
 ) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var contentWaitStarted = false
     private var manualHinted = false
     private val accumulatedTracks = mutableListOf<BiliTrack>()
+    private var totalPages = 0
+    private var totalItems = 0
+    private var currentPage = 0
 
     fun getFavlist(
         uid: String,
@@ -136,8 +141,28 @@ class BiliUser(
             val tracks = parseTracks(raw)
             log("当前页抓取 ${tracks.size} 条视频，累计 ${accumulatedTracks.size + tracks.size} 条")
             accumulatedTracks.addAll(tracks)
-            // 检查是否有下一页
-            checkNextPage(onResult)
+            // 抓取分页信息并上报进度（onProgress 在 scrapePagination 内部调用）
+            scrapePagination {
+                // 检查是否有下一页
+                checkNextPage(onResult)
+            }
+        }
+    }
+
+    private fun scrapePagination(callback: (String) -> Unit) {
+        val js = "(function(){var el=document.querySelector('.vui_pagenation-go__count');return el?(el.textContent||'').trim():'';})()"
+        browser.evaluate(js) { raw ->
+            val text = try { JSONTokener(raw).nextValue().toString() } catch (e: Exception) { raw }
+            // 解析 "共 X 页 / Y 个，跳至"
+            val pageMatch = Regex("共\\s*(\\d+)\\s*页").find(text)
+            val itemMatch = Regex("/\\s*(\\d+)\\s*个").find(text)
+            if (pageMatch != null) totalPages = pageMatch.groupValues[1].toIntOrNull() ?: 0
+            if (itemMatch != null) totalItems = itemMatch.groupValues[1].toIntOrNull() ?: 0
+            currentPage++
+            val progressText = "第${currentPage}页/共${totalPages}页, 已抓取${accumulatedTracks.size}个/共${totalItems}个"
+            onProgress(progressText)
+            if (totalPages > 0) onFetchProgress(currentPage.toFloat() / totalPages.toFloat())
+            callback(text)
         }
     }
 

@@ -337,6 +337,7 @@ private fun SetupScreen(uiState: PlayerUiState) {
 private fun PlayerScreen(uiState: PlayerUiState, showWebView: Boolean, onToggleWebView: () -> Unit, onBack: () -> Unit) {
     var scrubbing by remember { mutableStateOf(false) }
     var scrubValue by remember { mutableStateOf(0.0) }
+    var showTimerMenu by remember { mutableStateOf(false) }
     val duration = if (uiState.duration > 0) uiState.duration else 1.0
     val displayed = if (scrubbing) scrubValue else uiState.currentTime
 
@@ -442,6 +443,44 @@ private fun PlayerScreen(uiState: PlayerUiState, showWebView: Boolean, onToggleW
                     modifier = Modifier.padding(end = 8.dp)
                 )
             }
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("定时", modifier = Modifier.width(48.dp))
+            Box {
+                OutlinedButton(onClick = { showTimerMenu = true }) {
+                    Text(
+                        uiState.sleepRemaining?.let { formatTime(it.toDouble()) } ?: "关闭",
+                        fontSize = 12.sp
+                    )
+                }
+                DropdownMenu(expanded = showTimerMenu, onDismissRequest = { showTimerMenu = false }) {
+                    listOf(
+                        0L to "关闭", 300L to "5分钟", 600L to "10分钟",
+                        900L to "15分钟", 1800L to "30分钟", 3600L to "60分钟"
+                    ).forEach { (sec, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                PlayerController.setSleepTimer(sec, uiState.sleepAction)
+                                showTimerMenu = false
+                            }
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            FilterChip(
+                selected = uiState.sleepAction == SleepAction.PAUSE,
+                onClick = { PlayerController.setSleepTimer(uiState.sleepRemaining ?: 0, SleepAction.PAUSE) },
+                label = { Text("暂停") },
+                modifier = Modifier.padding(end = 4.dp)
+            )
+            FilterChip(
+                selected = uiState.sleepAction == SleepAction.QUIT,
+                onClick = { PlayerController.setSleepTimer(uiState.sleepRemaining ?: 0, SleepAction.QUIT) },
+                label = { Text("退出") }
+            )
         }
     }
 }

@@ -2,9 +2,18 @@ package com.netessx.biliplayer
 
 import android.content.Context
 import android.webkit.WebView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+/** 定时关闭到达后的动作。 */
+enum class SleepAction { PAUSE, QUIT }
 
 /** 播放器对外 UI 状态。 */
 data class PlayerUiState(
@@ -23,6 +32,8 @@ data class PlayerUiState(
     val volume: Int = 30,
     val playMode: PlayMode = PlayMode.SHUFFLE,
     val logLines: List<String> = emptyList(),
+    val sleepRemaining: Long? = null,
+    val sleepAction: SleepAction = SleepAction.PAUSE,
 )
 
 /**
@@ -38,6 +49,9 @@ object PlayerController {
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var sleepJob: Job? = null
+
     private val _webView = MutableStateFlow<WebView?>(null)
     val webView: StateFlow<WebView?> = _webView
 
@@ -50,6 +64,40 @@ object PlayerController {
                 playMode = Preferences.playMode(appContext),
             )
         }
+    }
+
+    /** 设置定时：seconds 秒后暂停或退出。<=0 取消。 */
+    fun setSleepTimer(seconds: Long, action: SleepAction) {
+        sleepJob?.cancel()
+        _state.update { it.copy(sleepAction = action) }
+        if (seconds <= 0) {
+            _state.update { it.copy(sleepRemaining = null) }
+            return
+        }
+        _state.update { it.copy(sleepRemaining = seconds) }
+        sleepJob = scope.launch {
+            var remaining = seconds
+            while (remaining > 0) {
+                delay(1000)
+                remaining--
+                _state.update { it.copy(sleepRemaining = remaining) }
+            }
+            _state.update { it.copy(sleepRemaining = null) }
+            when (_state.value.sleepAction) {
+                SleepAction.PAUSE -> {
+                    if (player?.isPlaying == true) player?.togglePause()
+                }
+                SleepAction.QUIT -> {
+                    stop()
+                    PlayerService.stop(appContext)
+                }
+            }
+        }
+    }
+
+    fun cancelSleepTimer() {
+        sleepJob?.cancel()
+        _state.update { it.copy(sleepRemaining = null) }
     }
 
     /** 抓取收藏夹并开始播放（复刻 run.py：get_favlist -> BiliMusicPlayer.play）。 */

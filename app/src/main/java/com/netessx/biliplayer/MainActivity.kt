@@ -278,10 +278,14 @@ private fun SetupScreen(uiState: PlayerUiState, onLoginClick: () -> Unit) {
         ) {
             Text("BiliPlayer", style = MaterialTheme.typography.headlineMedium)
             Text("正在抓取收藏夹… 请不要动上方画面", style = MaterialTheme.typography.titleLarge)
-            LinearProgressIndicator(
-                progress = { uiState.fetchProgress },
-                modifier = Modifier.fillMaxWidth()
-            )
+            if (uiState.fetchProgress > 0f) {
+                LinearProgressIndicator(
+                    progress = { uiState.fetchProgress },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            } else {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
             uiState.paginationInfo?.let { info ->
                 Text(info, style = MaterialTheme.typography.bodyMedium)
             }

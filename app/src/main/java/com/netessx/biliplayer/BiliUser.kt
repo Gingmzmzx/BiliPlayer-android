@@ -28,6 +28,7 @@ class BiliUser(
     private val mainHandler = Handler(Looper.getMainLooper())
     private var contentWaitStarted = false
     private var manualHinted = false
+    private val accumulatedTracks = mutableListOf<BiliTrack>()
 
     fun getFavlist(
         uid: String,
@@ -39,6 +40,7 @@ class BiliUser(
         var sidebarWaitStarted = false
         contentWaitStarted = false
         manualHinted = false
+        accumulatedTracks.clear()
         log("开始抓取 UID=$uid 收藏夹=$favName")
         browser.onPageStarted = { _ -> browser.evaluate(STEALTH_JS) }
         browser.onPageFinished = { _ ->
@@ -132,8 +134,53 @@ class BiliUser(
     private fun scrapeCards(onResult: (List<BiliTrack>) -> Unit) {
         browser.evaluate(SCRAPE_JS) { raw ->
             val tracks = parseTracks(raw)
-            log("已抓取 ${tracks.size} 条视频")
-            onResult(tracks)
+            log("当前页抓取 ${tracks.size} 条视频，累计 ${accumulatedTracks.size + tracks.size} 条")
+            accumulatedTracks.addAll(tracks)
+            // 检查是否有下一页
+            checkNextPage(onResult)
+        }
+    }
+
+    private fun checkNextPage(onResult: (List<BiliTrack>) -> Unit) {
+        // 上一页/下一页 class 相同，需通过文本内容区分；第一页时上一页 disabled
+        val checkJs = """
+            (function(){
+              var btns = document.querySelectorAll('button.vui_pagenation--btn-side');
+              for (var i = 0; i < btns.length; i++) {
+                var b = btns[i];
+                var txt = (b.textContent || '').trim();
+                if (txt.indexOf('下一页') >= 0) {
+                  var disabled = b.disabled || b.classList.contains('vui_pagenation--btn-disabled') || b.hasAttribute('disabled');
+                  return JSON.stringify({found:true, disabled:disabled, index:i});
+                }
+              }
+              return JSON.stringify({found:false});
+            })()
+        """.trimIndent()
+        browser.evaluate(checkJs) { raw ->
+            val obj = parseObj(raw)
+            if (obj != null && obj.optBoolean("found") && !obj.optBoolean("disabled")) {
+                // 有下一页且未禁用，点击下一页（通过 nth-child 精确定位）
+                val idx = obj.optInt("index", 0)
+                val clickJs = "(function(){var btns=document.querySelectorAll('button.vui_pagenation--btn-side');var b=btns[$idx];if(b)b.click();return !!b;})()"
+                browser.evaluate(clickJs) { clickRaw ->
+                    if (clickRaw.trim().equals("true", ignoreCase = true)) {
+                        log("点击下一页，等待加载…")
+                        mainHandler.postDelayed({
+                            waitForJs(CARDS_JS, timeoutMs = 15000,
+                                onReady = { scrapeCards(onResult) },
+                                onTimeout = { log("下一页加载超时，返回已抓取内容"); onResult(accumulatedTracks.toList()) }
+                            )
+                        }, 1500)
+                    } else {
+                        log("未找到下一页按钮，返回已抓取内容")
+                        onResult(accumulatedTracks.toList())
+                    }
+                }
+            } else {
+                log("没有更多页，共抓取 ${accumulatedTracks.size} 条视频")
+                onResult(accumulatedTracks.toList())
+            }
         }
     }
 

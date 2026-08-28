@@ -164,8 +164,11 @@ class PlayerService : Service() {
         notifJob?.cancel()
         progressJob?.cancel()
         scope.cancel()
+        mediaSession?.isActive = false
         mediaSession?.release()
         mediaSession = null
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.cancel(NOTIF_ID)
         wakeLock?.takeIf { it.isHeld }?.release()
         wakeLock = null
         PlayerController.release()

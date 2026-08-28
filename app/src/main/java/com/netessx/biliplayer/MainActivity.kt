@@ -47,6 +47,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
@@ -338,6 +339,7 @@ private fun PlayerScreen(uiState: PlayerUiState, showWebView: Boolean, onToggleW
     var scrubbing by remember { mutableStateOf(false) }
     var scrubValue by remember { mutableStateOf(0.0) }
     var showTimerMenu by remember { mutableStateOf(false) }
+    var showCustomTimerDialog by remember { mutableStateOf(false) }
     val duration = if (uiState.duration > 0) uiState.duration else 1.0
     val displayed = if (scrubbing) scrubValue else uiState.currentTime
 
@@ -467,6 +469,14 @@ private fun PlayerScreen(uiState: PlayerUiState, showWebView: Boolean, onToggleW
                             }
                         )
                     }
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("自定义…") },
+                        onClick = {
+                            showTimerMenu = false
+                            showCustomTimerDialog = true
+                        }
+                    )
                 }
             }
             Spacer(Modifier.width(8.dp))
@@ -483,6 +493,43 @@ private fun PlayerScreen(uiState: PlayerUiState, showWebView: Boolean, onToggleW
             )
         }
     }
+
+    if (showCustomTimerDialog) {
+        CustomTimerDialog(
+            onDismiss = { showCustomTimerDialog = false },
+            onConfirm = { seconds ->
+                PlayerController.setSleepTimer(seconds, uiState.sleepAction)
+                showCustomTimerDialog = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun CustomTimerDialog(onDismiss: () -> Unit, onConfirm: (Long) -> Unit) {
+    var minutes by remember { mutableStateOf("30") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("自定义定时") },
+        text = {
+            OutlinedTextField(
+                value = minutes,
+                onValueChange = { minutes = it },
+                label = { Text("分钟") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val m = minutes.trim().toLongOrNull()
+                if (m != null && m > 0) onConfirm(m * 60)
+            }) { Text("确定") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)

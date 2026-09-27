@@ -9,6 +9,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.text.method.LinkMovementMethod
+import android.widget.TextView
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.os.Bundle
@@ -50,6 +52,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -82,6 +85,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -97,8 +101,10 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.text.HtmlCompat
 import com.netessx.biliplayer.ui.theme.BiliPlayerTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -143,6 +149,8 @@ fun BiliPlayerApp() {
     var downloading by remember { mutableStateOf(false) }
     var downloadProgress by remember { mutableStateOf(0) }
     var downloadMessage by remember { mutableStateOf<String?>(null) }
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var checkResult by remember { mutableStateOf<String?>(null) }
 
     // 申请通知权限（API 33+，用于前台服务通知）
     val notifPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -247,7 +255,23 @@ fun BiliPlayerApp() {
                         currentTab = AppTab.PLAYER
                     })
                     AppTab.LOG -> LogScreen(uiState)
-                    AppTab.ABOUT -> AboutScreen()
+                    AppTab.ABOUT -> AboutScreen(
+                        checking = checkingUpdate,
+                        checkResult = checkResult,
+                        onCheckUpdate = {
+                            if (!checkingUpdate) {
+                                checkingUpdate = true
+                                checkResult = null
+                                scope.launch {
+                                    // 手动检查不看「忽略此版本」：请求过就一直反馈结果
+                                    val info = AppPublisher.checkUpdate(BuildConfig.VERSION_CODE)
+                                    checkingUpdate = false
+                                    if (info != null) updateInfo = info
+                                    else checkResult = "未发现新版本"
+                                }
+                            }
+                        }
+                    )
                 }
                 }
             }
@@ -405,11 +429,50 @@ private fun NoticeDialog(info: NoticeInfo, onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                // content 是纯文本，可能含换行
-                Text(info.content)
+                // content 支持简单 HTML（b/i/u/a/p/br/ul/li 等），也兼容纯文本换行
+                HtmlText(info.content)
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } }
+    )
+}
+
+/**
+ * 渲染公告里的简单 HTML。
+ *
+ * 用平台 [HtmlCompat] 解析（不是 WebView）：不执行脚本、不加载远程资源，
+ * 只接受基础排版标签，`<a href>` 交由 [LinkMovementMethod] 用系统浏览器打开。
+ * 传进来的内容若不含任何标签，按纯文本处理，`\n` 视作换行。
+ */
+@Composable
+private fun HtmlText(
+    html: String,
+    modifier: Modifier = Modifier,
+    textStyle: TextStyle = MaterialTheme.typography.bodyMedium,
+) {
+    val contentColor = MaterialTheme.colorScheme.onSurface.toArgb()
+    val linkColor = MaterialTheme.colorScheme.primary.toArgb()
+    val textSize = if (textStyle.fontSize.isSpecified) textStyle.fontSize.value else 14f
+    // 纯文本里的换行在 HTML 里会被折叠，先转成 <br>
+    val source = remember(html) {
+        if (html.contains('<')) html else html.replace("\n", "<br>")
+    }
+    val spanned = remember(source, contentColor, linkColor, textSize) {
+        HtmlCompat.fromHtml(source, HtmlCompat.FROM_HTML_MODE_COMPACT)
+    }
+    AndroidView(
+        modifier = modifier.fillMaxWidth(),
+        factory = { ctx ->
+            TextView(ctx).apply {
+                setTextColor(contentColor)
+                setLinkTextColor(linkColor)
+                this.textSize = textSize
+                movementMethod = LinkMovementMethod.getInstance()
+                // 链接点击用系统浏览器打开，不在应用内导航
+                linksClickable = true
+            }
+        },
+        update = { it.text = spanned }
     )
 }
 
@@ -950,7 +1013,11 @@ private fun LogScreen(uiState: PlayerUiState) {
 }
 
 @Composable
-private fun AboutScreen() {
+private fun AboutScreen(
+    checking: Boolean,
+    checkResult: String?,
+    onCheckUpdate: () -> Unit,
+) {
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -973,6 +1040,10 @@ private fun AboutScreen() {
             "本项目开源地址：https://github.com/Gingmzmzx/BiliPlayer-android",
             "https://github.com/Gingmzmzx/BiliPlayer-android"
         )
+        LinkText(
+            "官网 / 下载：https://apps.netessx.com/BiliPlayerAndroid",
+            "https://apps.netessx.com/BiliPlayerAndroid"
+        )
         Text("本项目是BiliPlayer的Android端实现，采用WebView并支持后台播放。由Gingmzmzx借助Claude Code开发", style = MaterialTheme.typography.bodyMedium)
         LinkText(
             "本项目仍在早期开发阶段，可能仍不稳定，存在许多bug，请您积极前往GitHub反馈，感谢您提交issue。也强烈建议您前往我的爱发电支持我：https://afdian.com/a/Gingmzmzx",
@@ -980,6 +1051,25 @@ private fun AboutScreen() {
             textStyle = MaterialTheme.typography.bodyMedium
         )
         Spacer(Modifier.weight(1f))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            OutlinedButton(onClick = onCheckUpdate, enabled = !checking) {
+                if (checking) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(if (checking) "检查中…" else "检查更新")
+            }
+            checkResult?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
         Text(
             "v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE}) · 调试用",
             style = MaterialTheme.typography.labelSmall,

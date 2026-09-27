@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BiliPlayer · 把 B 站收藏夹变成随身播放器</title>
-<meta name="description" content="BiliPlayer —— 用无头浏览器驱动的 B 站音乐播放器。读取收藏夹、后台播放、系统媒体控制、边听边看 MV。开源免费。">
+<meta name="description" content="BiliPlayer —— 用无头浏览器驱动的 B 站音乐播放器。读取收藏夹、后台播放、灵动岛 / 锁屏与蓝牙媒体控制、边听边看 MV。开源免费。">
 <style>
 /* ==========================================================================
    Material You (Material 3) 设计令牌
@@ -227,9 +227,20 @@ body {
 .ph .ph-desc { font-size: 12.5px; color: var(--md-on-surface-variant); max-width: 340px; line-height: 1.6; }
 .ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ph img:not([src=""]) + .ph-inner { display: none; }
+/* 图片加载成功后由 onload 打上 has-img：容器放弃固定宽高比，
+   改为按图片原始比例撑开，避免 cover 把上下裁掉 */
+.ph.has-img {
+  aspect-ratio: auto; padding: 0;
+  width: max-content; max-width: 100%; margin: 0 auto;
+  background: none; border: none;
+}
+.ph.has-img img {
+  width: auto; height: auto; max-width: 100%; max-height: 70vh;
+  object-fit: contain; border-radius: var(--md-corner-l);
+}
 
-.ph-phone { aspect-ratio: 9/16; max-width: 300px; margin: 0 auto; width: 100%; }
-.ph-land  { aspect-ratio: 16/10; width: 100%; }
+.ph-phone { aspect-ratio: 9/20; max-width: 300px; margin: 0 auto; width: 100%; }
+.ph-land  { aspect-ratio: 9/20; width: 100%; }
 
 /* ==========================================================================
    功能介绍两栏
@@ -377,8 +388,8 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
 <!-- ========================= Top App Bar ========================= -->
 <div class="app-bar">
   <div class="app-bar-inner">
-    <img class="logo" src="images/icon.webp" alt="BiliPlayer">
-    <span class="name">BiliPlayer</span>
+    <img class="logo" src="/media/images/8d2b34ed49bd21adcc68cce84c7e4f92.webp" alt="BiliPlayer">
+    <span class="name">BiliPlayer-android</span>
     <a class="btn btn-text btn-sm" id="bar-github" href="https://github.com/Gingmzmzx/BiliPlayer-android" target="_blank" rel="noopener">GitHub</a>
     <a class="btn btn-filled btn-sm" id="bar-download" href="#download">下载</a>
   </div>
@@ -388,28 +399,32 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
 
   <!-- ========================= Hero ========================= -->
   <header class="hero">
-    <img class="logo-lg" src="images/icon.webp" alt="BiliPlayer">
+    <img class="logo-lg" src="/media/images/8d2b34ed49bd21adcc68cce84c7e4f92.webp" alt="BiliPlayer">
     <h1 class="t-display">把 B 站收藏夹<br>变成随身播放器</h1>
     <p class="t-body on-surface-variant" style="margin-top:18px">
       BiliPlayer 用一个无头浏览器打开 B 站页面，把视频里的声音播出来，<br>
       同时接管系统媒体控制。不用守着电脑，也能把收藏夹当歌单听。
+    </p>
+    <p class="t-body on-surface-variant" style="margin-top:10px">
+      <strong>灵动岛 / 胶囊通知里直接显示正在播放的歌</strong>——封面、进度、上下曲都能点，不只是锁屏。
     </p>
     <div class="hero-actions">
       <a class="btn btn-filled" id="hero-download" href="#download">下载最新版</a>
       <a class="btn btn-tonal" href="https://github.com/Gingmzmzx/BiliPlayer-android" target="_blank" rel="noopener">查看源码</a>
     </div>
     <div class="chips hero-chips">
+      <span class="chip hl">灵动岛 / 锁屏控制</span>
       <span class="chip hl">无头 WebView</span>
       <span class="chip assist">纯 DOM 抓取</span>
       <span class="chip assist">不调用任何 API</span>
       <span class="chip assist">开源免费</span>
     </div>
 
-    <div class="ph ph-land" style="margin-top:44px;aspect-ratio:16/9">
-      <img src="images/hero.png" alt="" onload="this.src&&this.naturalWidth&&(this.nextElementSibling.style.display='none')" onerror="this.style.display='none'">
+    <div class="ph ph-phone" style="margin-top:44px">
+      <img src="/media/images/f6c3b4a72467e6ae81be9cec9ad88005.png" alt="" onload="this.src&&this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
       <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
         <div class="ph-icon">📱</div>
-        <div class="ph-name">images/hero.png</div>
+        <div class="ph-name">/media/images/f6c3b4a72467e6ae81be9cec9ad88005.png</div>
         <div class="ph-desc">首页大图：播放器主界面（建议横屏 16:9，展示封面 + 控制区 + 播放列表）</div>
       </div>
     </div>
@@ -436,8 +451,8 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
       <div class="card">
         <div class="card-icon ter">🎛️</div>
-        <h3 class="t-title">系统级媒体控制</h3>
-        <p class="t-body on-surface-variant">通知栏、锁屏、蓝牙耳机都能播放暂停、上下曲、拖进度。</p>
+        <h3 class="t-title">灵动岛 &amp; 系统媒体控制</h3>
+        <p class="t-body on-surface-variant">灵动岛（胶囊通知）、通知栏、锁屏、蓝牙耳机都能播放暂停、上下曲、拖进度。</p>
       </div>
       <div class="card">
         <div class="card-icon">🎬</div>
@@ -482,18 +497,46 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
       <div class="feature-media">
         <div class="ph ph-phone">
-          <img src="images/setup.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')" onerror="this.style.display='none'">
+          <img src="/media/images/8d45863e7e3d9e959e586e0fbb7d3580.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
           <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
             <div class="ph-icon">⚙️</div>
-            <div class="ph-name">images/setup.png</div>
+            <div class="ph-name">/media/images/8d45863e7e3d9e959e586e0fbb7d3580.png</div>
             <div class="ph-desc">设置页：UID、收藏夹名、自动全屏勾选、登录按钮、开始播放</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 2 登录 -->
+    <!-- 2 抓取进度 -->
     <div class="feature flip">
+      <div class="feature-body">
+        <h3 class="t-headline">抓取进度</h3>
+        <p class="t-body">抓取过程中顶部实时显示进度：翻到第几页、总共几页，已经抓到多少个、一共多少个。抓取和播放共用同一个浏览器，不用时它只是安静待在屏幕外。</p>
+        <ul class="feature-list">
+          <li><strong>翻页进度</strong>：「第 X 页 / 共 Y 页」实时更新</li>
+          <li><strong>曲目计数</strong>：「已抓取 N 个 / 共 M 个」</li>
+          <li>总数还没拿到时显示<strong>不确定进度条</strong>，不会假装有百分比</li>
+          <li>点失败可手动介入：直接点画面里的收藏夹项就能继续</li>
+        </ul>
+        <div class="chips">
+          <span class="chip assist">实时进度</span>
+          <span class="chip assist">失败可手动介入</span>
+        </div>
+      </div>
+      <div class="feature-media">
+        <div class="ph ph-phone">
+          <img src="/media/images/57e23a6114aa4beaa89267af676b6669.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
+          <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+            <div class="ph-icon">📥</div>
+            <div class="ph-name">/media/images/57e23a6114aa4beaa89267af676b6669.png</div>
+            <div class="ph-desc">抓取中：进度条 + 「第 2 页 / 共 3 页，已抓取 67 个 / 共 101 个」</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3 登录 -->
+    <div class="feature">
       <div class="feature-body">
         <h3 class="t-headline">登录 B 站</h3>
         <p class="t-body">应用内置一个 PC 端登录页，登录后即可访问私密收藏夹。登录状态仅保存在本机 WebView 中。</p>
@@ -505,18 +548,18 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
       <div class="feature-media">
         <div class="ph ph-phone">
-          <img src="images/login.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')" onerror="this.style.display='none'">
+          <img src="/media/images/b57b6725f892f8347cebfd041c9ae6fc.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
           <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
             <div class="ph-icon">🔐</div>
-            <div class="ph-name">images/login.png</div>
+            <div class="ph-name">/media/images/b57b6725f892f8347cebfd041c9ae6fc.png</div>
             <div class="ph-desc">B 站登录页：顶部返回按钮 + 隐私说明 + 网页内容</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 3 播放器 -->
-    <div class="feature">
+    <!-- 4 播放器 -->
+    <div class="feature flip">
       <div class="feature-body">
         <h3 class="t-headline">播放器</h3>
         <p class="t-body">抓取完成后自动进入播放器开始播放。界面包含完整的播放控制，并且可以上下滚动，小屏也不会挤掉控件。</p>
@@ -529,18 +572,18 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
       <div class="feature-media">
         <div class="ph ph-phone">
-          <img src="images/player.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')" onerror="this.style.display='none'">
+          <img src="/media/images/0ebca9563b8d7b3105739a7f667132d3.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
           <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
             <div class="ph-icon">🎵</div>
-            <div class="ph-name">images/player.png</div>
+            <div class="ph-name">/media/images/0ebca9563b8d7b3105739a7f667132d3.png</div>
             <div class="ph-desc">播放器主界面：封面、标题、进度条、控制按钮、音量、模式、定时</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 4 MV -->
-    <div class="feature flip">
+    <!-- 5 MV -->
+    <div class="feature">
       <div class="feature-body">
         <h3 class="t-headline">边听边看 MV</h3>
         <p class="t-body">点击「显示画面」，浏览器画面就会出现在界面上方。视频加载完成后自动进入网页全屏，并隐藏播放器控制条。</p>
@@ -552,19 +595,19 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
         </ul>
       </div>
       <div class="feature-media">
-        <div class="ph ph-land">
-          <img src="images/fullscreen.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')" onerror="this.style.display='none'">
+        <div class="ph ph-phone">
+          <img src="/media/images/f6c3b4a72467e6ae81be9cec9ad88005.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
           <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
             <div class="ph-icon">🎬</div>
-            <div class="ph-name">images/fullscreen.png</div>
-            <div class="ph-desc">横屏截图：网页全屏后的 MV 画面（无控制条）</div>
+            <div class="ph-name">/media/images/f6c3b4a72467e6ae81be9cec9ad88005.png</div>
+            <div class="ph-desc">MV 画面：网页全屏后的视频（无控制条）</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 5 播放列表 -->
-    <div class="feature">
+    <!-- 6 播放列表 -->
+    <div class="feature flip">
       <div class="feature-body">
         <h3 class="t-headline">播放列表</h3>
         <p class="t-body">底部导航栏一键进入播放列表，每条都带封面缩略图，当前播放的曲目会高亮标记。</p>
@@ -576,18 +619,18 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
       <div class="feature-media">
         <div class="ph ph-phone">
-          <img src="images/playlist.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')" onerror="this.style.display='none'">
+          <img src="/media/images/9d84907d8bc903151aa361419c21ae0c.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
           <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
             <div class="ph-icon">📋</div>
-            <div class="ph-name">images/playlist.png</div>
+            <div class="ph-name">/media/images/9d84907d8bc903151aa361419c21ae0c.png</div>
             <div class="ph-desc">播放列表：封面缩略图 + 当前曲目高亮</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 6 单曲偏好 -->
-    <div class="feature flip">
+    <!-- 7 单曲偏好 -->
+    <div class="feature">
       <div class="feature-body">
         <h3 class="t-headline">单曲偏好</h3>
         <p class="t-body">每一首歌都可以单独配置，按 BV 号独立保存，下次播放自动生效。</p>
@@ -599,34 +642,46 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
       <div class="feature-media">
         <div class="ph ph-phone">
-          <img src="images/pref.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')" onerror="this.style.display='none'">
+          <img src="/media/images/40dbd81e1aea4f2cb2d89e57b77851ec.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
           <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
             <div class="ph-icon">⚡</div>
-            <div class="ph-name">images/pref.png</div>
+            <div class="ph-name">/media/images/40dbd81e1aea4f2cb2d89e57b77851ec.png</div>
             <div class="ph-desc">长按弹窗：分P 下拉、开始秒、结束秒、保存/删除</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 7 系统控制 -->
-    <div class="feature">
+    <!-- 8 灵动岛 / 系统控制 -->
+    <div class="feature flip">
       <div class="feature-body">
-        <h3 class="t-headline">系统媒体控制</h3>
-        <p class="t-body">应用注册了系统媒体会话，锁屏、通知栏、蓝牙耳机都能控制播放，进度与封面实时同步。</p>
+        <span class="chip hl" style="margin-bottom:10px">重点</span>
+        <h3 class="t-headline">灵动岛 &amp; 系统媒体控制</h3>
+        <p class="t-body">
+          应用注册了完整的系统媒体会话（<code>MediaSession</code> + 前台服务），
+          所以系统会把正在播放的歌显示在<strong>灵动岛 / 胶囊通知</strong>上——
+          封面、进度条、上一首下一首都在那颗胶囊里，<strong>不只是锁屏才有</strong>。
+        </p>
         <ul class="feature-list">
-          <li><strong>通知栏</strong>：上一首 / 播放暂停 / 下一首</li>
+          <li><strong>灵动岛 / 胶囊通知</strong>：亮屏、切到别的应用时也能看到当前歌曲，直接点按控制</li>
           <li><strong>锁屏</strong>：显示封面与进度，可拖动跳转</li>
+          <li><strong>通知栏</strong>：上一首 / 播放暂停 / 下一首常驻按钮</li>
           <li><strong>蓝牙耳机</strong>：播放暂停与上下曲按键全部生效</li>
+          <li>进度、时长、封面与播放状态<strong>实时同步</strong>，拖动不跳歌</li>
         </ul>
+        <div class="chips">
+          <span class="chip assist">MediaSession</span>
+          <span class="chip assist">前台服务保活</span>
+          <span class="chip assist">封面同步到系统</span>
+        </div>
       </div>
       <div class="feature-media">
-        <div class="ph ph-land">
-          <img src="images/lockscreen.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')" onerror="this.style.display='none'">
+        <div class="ph ph-phone">
+          <img src="/media/images/047348306a914c66bbeb4bb6e6416162.jpg" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
           <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
             <div class="ph-icon">🔒</div>
-            <div class="ph-name">images/lockscreen.png</div>
-            <div class="ph-desc">锁屏媒体控制：封面 + 进度条 + 控制按钮</div>
+            <div class="ph-name">/media/images/047348306a914c66bbeb4bb6e6416162.jpg</div>
+            <div class="ph-desc">灵动岛 / 锁屏媒体控制：封面 + 进度条 + 控制按钮</div>
           </div>
         </div>
       </div>
@@ -738,13 +793,22 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
         播放时为避免误触跳转，画面区域默认屏蔽触摸。使用应用内的控制区和系统通知即可操作播放。
       </div>
     </details>
+
+    <details class="faq">
+      <summary>灵动岛 / 胶囊通知上没有显示歌曲？</summary>
+      <div class="faq-body">
+        灵动岛由系统提供，能显示什么由系统决定，不同品牌、不同系统版本的形态与支持程度都不一样（有的叫灵动岛，有的叫胶囊、焦点通知）。
+        只要应用在播放，系统媒体会话就是激活状态，支持该能力的系统会自动把歌曲显示上去；
+        若系统不支持，则退化为通知栏与锁屏控制，功能不受影响。同时请确认已授予通知权限、且未在系统设置里关闭本应用的通知。
+      </div>
+    </details>
   </section>
 
   <!-- ========================= 开源仓库 ========================= -->
   <section class="section">
     <div class="card outlined">
       <div class="repo">
-        <img class="logo" src="images/icon.webp" alt="">
+        <img class="logo" src="/media/images/8d2b34ed49bd21adcc68cce84c7e4f92.webp" alt="">
         <div style="flex:1;min-width:200px">
           <div class="t-title" style="margin-bottom:6px">开源仓库</div>
           <div class="url">github.com/Gingmzmzx/BiliPlayer-android</div>

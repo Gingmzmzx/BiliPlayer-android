@@ -107,9 +107,9 @@
     position: relative; border-radius: 20px; overflow: hidden;
     border: 1px solid var(--line); background: var(--bg-soft);
     box-shadow: 0 30px 80px rgba(0,0,0,.6);
-    aspect-ratio: 9/16; max-height: 66vh; margin: 0 auto; width: 100%; max-width: 300px;
+    aspect-ratio: 9/20; max-height: 66vh; margin: 0 auto; width: 100%; max-width: 300px;
   }
-  .shot.land { aspect-ratio: 16/10; max-width: 100%; max-height: 58vh; }
+  .shot.land { max-width: 100%; max-height: 58vh; }
   .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .shot .ph {
     position: absolute; inset: 0; display: flex; flex-direction: column;
@@ -126,6 +126,21 @@
     border: 1px solid var(--line);
   }
   .shot .ph .desc { font-size: 12px; opacity: .68; line-height: 1.6; }
+  /* 图片加载成功后由 onload 打上 has-img：
+     容器只负责定位：宽度收缩到图片宽度，自身的底色/边框/阴影全部撤掉，
+     圆角与描边改由图片承担，这样"边框"始终等于图片本身的尺寸与比例 */
+  .shot.has-img {
+    aspect-ratio: auto; max-height: none;
+    width: max-content; max-width: 100%; justify-self: center;
+    background: none; border: none; box-shadow: none;
+  }
+  .shot.has-img img {
+    width: auto; height: auto; max-width: 100%; max-height: 66vh;
+    object-fit: contain; margin: 0 auto;
+    border-radius: 20px; border: 1px solid var(--line);
+    box-shadow: 0 30px 80px rgba(0,0,0,.6);
+  }
+  .shot.land.has-img img { max-height: 58vh; }
 
   /* ===== 卡片网格 ===== */
   .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; width: 100%; max-width: 1000px; margin-top: 40px; text-align: left; }
@@ -214,7 +229,7 @@
 
   <!-- 1 封面 -->
   <section class="slide" data-dur="6">
-    <img class="appicon anim" src="images/icon.webp" alt="BiliPlayer">
+    <img class="appicon anim" src="https://apps.netessx.com/media/images/8d2b34ed49bd21adcc68cce84c7e4f92.webp" alt="BiliPlayer">
     <h1 class="anim grad">BiliPlayer</h1>
     <p class="lead anim">用无头浏览器驱动的 B 站音乐播放器<br>读取收藏夹 · 后台播放 · 系统级控制 · 边听边看 MV</p>
     <div class="tagline-pills anim">
@@ -268,7 +283,7 @@
         </ul>
       </div>
       <div class="shot anim">
-        <img src="images/setup.png" alt="设置页" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <img src="https://apps.netessx.com/media/images/8d45863e7e3d9e959e586e0fbb7d3580.png" alt="设置页" onload="this.nextElementSibling.style.display='none';this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
         <div class="ph"><div class="ico">⚙️</div><div class="name">images/setup.png</div><div class="desc">设置页：UID、收藏夹名、自动全屏勾选、登录按钮、开始播放</div></div>
       </div>
     </div>
@@ -278,7 +293,7 @@
   <section class="slide" data-dur="8">
     <div class="split">
       <div class="shot anim">
-        <img src="images/login.png" alt="登录页" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <img src="https://apps.netessx.com/media/images/b57b6725f892f8347cebfd041c9ae6fc.png" alt="登录页" onload="this.nextElementSibling.style.display='none';this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
         <div class="ph"><div class="ico">🔐</div><div class="name">images/login.png</div><div class="desc">B 站登录页 + 返回按钮 + 隐私说明</div></div>
       </div>
       <div class="body">
@@ -308,8 +323,8 @@
         </ul>
       </div>
       <div class="shot anim">
-        <img src="images/fetching.png" alt="抓取进度" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
-        <div class="ph"><div class="ico">📥</div><div class="name">images/fetching.png</div><div class="desc">抓取中：进度条 + 「第 2 页/共 3 页, 已抓取 67 个/共 101 个」</div></div>
+        <img src="https://apps.netessx.com/media/images/57e23a6114aa4beaa89267af676b6669.png" alt="抓取进度" onload="this.nextElementSibling.style.display='none';this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
+        <div class="ph"><div class="ico">📥</div><div class="name">fetching</div><div class="desc">抓取中：进度条 + 「第 2 页/共 3 页, 已抓取 67 个/共 101 个」</div></div>
       </div>
     </div>
   </section>
@@ -331,7 +346,7 @@
   <section class="slide" data-dur="8">
     <div class="split">
       <div class="shot anim">
-        <img src="images/player.png" alt="播放器" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <img src="https://apps.netessx.com/media/images/0ebca9563b8d7b3105739a7f667132d3.png" alt="播放器" onload="this.nextElementSibling.style.display='none';this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
         <div class="ph"><div class="ico">🎵</div><div class="name">images/player.png</div><div class="desc">播放器：封面、标题、进度条、控制按钮、音量、模式、定时</div></div>
       </div>
       <div class="body">
@@ -375,7 +390,7 @@
         </ul>
       </div>
       <div class="shot land anim">
-        <img src="images/fullscreen.png" alt="全屏 MV" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <img src="https://apps.netessx.com/media/images/f6c3b4a72467e6ae81be9cec9ad88005.png" alt="全屏 MV" onload="this.nextElementSibling.style.display='none';this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
         <div class="ph"><div class="ico">🎬</div><div class="name">images/fullscreen.png</div><div class="desc">横屏截图：网页全屏后的 MV 画面（无控制条）</div></div>
       </div>
     </div>
@@ -385,7 +400,7 @@
   <section class="slide" data-dur="8">
     <div class="split">
       <div class="shot anim">
-        <img src="images/playlist.png" alt="播放列表" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <img src="https://apps.netessx.com/media/images/9d84907d8bc903151aa361419c21ae0c.png" alt="播放列表" onload="this.nextElementSibling.style.display='none';this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
         <div class="ph"><div class="ico">📋</div><div class="name">images/playlist.png</div><div class="desc">播放列表：封面缩略图 + 当前曲目标记</div></div>
       </div>
       <div class="body">
@@ -416,7 +431,7 @@
         </ul>
       </div>
       <div class="shot anim">
-        <img src="images/pref.png" alt="偏好设置" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <img src="https://apps.netessx.com/media/images/40dbd81e1aea4f2cb2d89e57b77851ec.png" alt="偏好设置" onload="this.nextElementSibling.style.display='none';this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
         <div class="ph"><div class="ico">⚡</div><div class="name">images/pref.png</div><div class="desc">长按弹窗：分P 下拉、开始秒、结束秒、保存/删除</div></div>
       </div>
     </div>
@@ -445,13 +460,14 @@
         <ul class="bullets anim">
           <li><strong>前台服务保活</strong>，切应用不中断</li>
           <li><strong>锁屏、息屏继续播放</strong></li>
+          <li><strong>灵动岛 / 胶囊通知</strong>实时显示当前歌曲，直接点按控制</li>
           <li class="b"><strong>状态丢失自动重载</strong>，并续播到上次位置</li>
           <li class="g">视频失效自动切换下一首</li>
         </ul>
       </div>
       <div class="shot land anim">
-        <img src="images/lockscreen.png" alt="锁屏控制" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
-        <div class="ph"><div class="ico">🔒</div><div class="name">images/lockscreen.png</div><div class="desc">锁屏界面：封面 + 进度条 + 控制按钮</div></div>
+        <img src="https://apps.netessx.com/media/images/047348306a914c66bbeb4bb6e6416162.jpg" alt="锁屏控制" onload="this.nextElementSibling.style.display='none';this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
+        <div class="ph"><div class="ico">🔒</div><div class="name">lockscreen</div><div class="desc">锁屏 / 灵动岛媒体控制：封面 + 进度条 + 控制按钮</div></div>
       </div>
     </div>
   </section>
@@ -512,7 +528,7 @@
     <h2 class="anim">开源 · 免费下载</h2>
     <div class="repo-card anim">
       <div class="row">
-        <img class="appicon-sm" src="images/icon.webp" alt="">
+        <img class="appicon-sm" src="https://apps.netessx.com/media/images/8d2b34ed49bd21adcc68cce84c7e4f92.webp" alt="">
         <div>
           <div style="font-size:13px;color:var(--muted);margin-bottom:6px">GitHub 仓库</div>
           <div class="url">github.com/Gingmzmzx/BiliPlayer-android</div>
@@ -534,7 +550,7 @@
 
   <!-- 19 结尾 -->
   <section class="slide" data-dur="8">
-    <img class="appicon anim" src="images/icon.webp" alt="BiliPlayer">
+    <img class="appicon anim" src="https://apps.netessx.com/media/images/8d2b34ed49bd21adcc68cce84c7e4f92.webp" alt="BiliPlayer">
     <h2 class="anim grad-pink">把收藏夹变成随身播放器</h2>
     <p class="lead anim">后台播放 · 系统控制 · 边听边看</p>
     <div class="tagline-pills anim">

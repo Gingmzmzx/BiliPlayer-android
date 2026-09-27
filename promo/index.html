@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BiliPlayer · 功能演示</title>
+<style>
+  :root {
+    --pink: #FB7299;
+    --pink-soft: #ff9db8;
+    --blue: #23ADE5;
+    --purple: #7b5cff;
+    --green: #4dd6a8;
+    --bg: #0a0c12;
+    --bg-soft: #12151f;
+    --card: rgba(255,255,255,.045);
+    --line: rgba(255,255,255,.09);
+    --text: #eef1f8;
+    --muted: #8b93a7;
+    --dim: #5b6377;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); overflow: hidden; height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ===== 背景光晕 ===== */
+  .aurora { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+  .aurora span { position: absolute; border-radius: 50%; filter: blur(120px); opacity: .26; animation: drift 24s ease-in-out infinite; }
+  .aurora span:nth-child(1) { width: 560px; height: 560px; background: var(--pink); top: -160px; left: -120px; }
+  .aurora span:nth-child(2) { width: 480px; height: 480px; background: var(--blue); bottom: -180px; right: -140px; animation-delay: -8s; }
+  .aurora span:nth-child(3) { width: 420px; height: 420px; background: var(--purple); top: 40%; left: 42%; animation-delay: -16s; }
+  @keyframes drift {
+    0%,100% { transform: translate(0,0) scale(1); }
+    33%     { transform: translate(70px,-60px) scale(1.12); }
+    66%     { transform: translate(-60px,50px) scale(.9); }
+  }
+
+  /* ===== 顶部进度条 ===== */
+  #progress-track {
+    position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 100;
+    background: rgba(255,255,255,.06);
+  }
+  #progress-bar {
+    height: 100%; width: 0;
+    background: linear-gradient(90deg, var(--pink), var(--blue));
+    box-shadow: 0 0 12px rgba(251,114,153,.6);
+  }
+  #progress-bar.run { animation-name: fill; animation-timing-function: linear; animation-fill-mode: forwards; }
+  @keyframes fill { from { width: 0; } to { width: 100%; } }
+
+  /* ===== 幻灯片容器 ===== */
+  .deck { position: relative; z-index: 1; height: 100vh; }
+  .slide {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 56px 60px; text-align: center;
+    opacity: 0; visibility: hidden;
+    transform: translateY(26px) scale(.985);
+    transition: opacity .6s ease, transform .6s cubic-bezier(.2,.8,.2,1), visibility .6s;
+  }
+  .slide.active { opacity: 1; visibility: visible; transform: none; }
+
+  /* 元素依次入场 */
+  .slide.active .anim { animation: rise .7s cubic-bezier(.2,.8,.2,1) both; }
+  .slide.active .anim:nth-child(1) { animation-delay: .10s; }
+  .slide.active .anim:nth-child(2) { animation-delay: .20s; }
+  .slide.active .anim:nth-child(3) { animation-delay: .30s; }
+  .slide.active .anim:nth-child(4) { animation-delay: .40s; }
+  .slide.active .anim:nth-child(5) { animation-delay: .50s; }
+  @keyframes rise { from { opacity: 0; transform: translateY(26px); } to { opacity: 1; transform: none; } }
+
+  /* ===== 排版 ===== */
+  .kicker { font-size: 13px; letter-spacing: 4px; font-weight: 700; color: var(--pink); text-transform: uppercase; margin-bottom: 16px; }
+  .kicker.blue { color: var(--blue); }
+  .kicker.green { color: var(--green); }
+  h1 { font-size: clamp(46px, 7.5vw, 88px); font-weight: 800; letter-spacing: -2px; line-height: 1.05; }
+  h2 { font-size: clamp(30px, 4.4vw, 50px); font-weight: 780; letter-spacing: -1px; line-height: 1.15; }
+  .grad {
+    background: linear-gradient(120deg, #fff 15%, var(--pink-soft) 55%, var(--blue) 90%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .grad-pink { background: linear-gradient(120deg, var(--pink-soft), var(--blue)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .lead { margin-top: 22px; font-size: clamp(15px, 1.9vw, 20px); color: var(--muted); line-height: 1.8; max-width: 760px; }
+  .hint { margin-top: 40px; font-size: 13px; color: var(--dim); letter-spacing: 1px; }
+
+  /* ===== 双栏（文字 + 截图） ===== */
+  .split { display: grid; grid-template-columns: 1fr .82fr; gap: 60px; align-items: center; width: 100%; max-width: 1180px; text-align: left; }
+  .split.wide { grid-template-columns: 1fr 1.15fr; }
+  .split .body h2 { margin-bottom: 20px; }
+  .split .body p { color: var(--muted); line-height: 1.9; font-size: 16px; }
+  .bullets { margin-top: 26px; list-style: none; display: grid; gap: 12px; }
+  .bullets li { color: var(--muted); font-size: 15px; line-height: 1.7; padding-left: 26px; position: relative; }
+  .bullets li::before {
+    content: ''; position: absolute; left: 4px; top: 9px;
+    width: 8px; height: 8px; border-radius: 50%; background: var(--pink);
+    box-shadow: 0 0 10px rgba(251,114,153,.5);
+  }
+  .bullets li.b::before { background: var(--blue); box-shadow: 0 0 10px rgba(35,173,229,.5); }
+  .bullets li.g::before { background: var(--green); box-shadow: 0 0 10px rgba(77,214,168,.5); }
+  .bullets li strong { color: var(--text); font-weight: 650; }
+
+  /* ===== 截图 ===== */
+  .shot {
+    position: relative; border-radius: 20px; overflow: hidden;
+    border: 1px solid var(--line); background: var(--bg-soft);
+    box-shadow: 0 30px 80px rgba(0,0,0,.6);
+    aspect-ratio: 9/16; max-height: 66vh; margin: 0 auto; width: 100%; max-width: 300px;
+  }
+  .shot.land { aspect-ratio: 16/10; max-width: 100%; max-height: 58vh; }
+  .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .shot .ph {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 11px; padding: 20px;
+    background:
+      linear-gradient(135deg, rgba(251,114,153,.08), rgba(35,173,229,.08)),
+      repeating-linear-gradient(45deg, rgba(255,255,255,.02) 0 12px, transparent 12px 24px);
+    color: var(--muted);
+  }
+  .shot .ph .ico { font-size: 36px; opacity: .5; }
+  .shot .ph .name {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px;
+    color: var(--pink-soft); background: rgba(0,0,0,.4); padding: 5px 12px; border-radius: 7px;
+    border: 1px solid var(--line);
+  }
+  .shot .ph .desc { font-size: 12px; opacity: .68; line-height: 1.6; }
+
+  /* ===== 卡片网格 ===== */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; width: 100%; max-width: 1000px; margin-top: 40px; text-align: left; }
+  .cards.c3 { grid-template-columns: repeat(3, 1fr); max-width: 1080px; }
+  .card {
+    padding: 26px 24px; border-radius: 16px; background: var(--card);
+    border: 1px solid var(--line); backdrop-filter: blur(10px);
+  }
+  .card .ico { font-size: 27px; margin-bottom: 13px; }
+  .card h4 { font-size: 16.5px; font-weight: 700; margin-bottom: 8px; }
+  .card p { font-size: 13.5px; color: var(--muted); line-height: 1.75; }
+
+  /* ===== 技术条 ===== */
+  .tech-list { display: grid; gap: 15px; width: 100%; max-width: 980px; margin-top: 38px; text-align: left; }
+  .tech-item {
+    display: flex; gap: 22px; align-items: flex-start; padding: 22px 26px;
+    border-left: 3px solid var(--pink); border-radius: 0 14px 14px 0; background: var(--card);
+  }
+  .tech-item:nth-child(2) { border-left-color: var(--blue); }
+  .tech-item:nth-child(3) { border-left-color: var(--purple); }
+  .tech-item:nth-child(4) { border-left-color: var(--green); }
+  .tech-item .k { font-family: ui-monospace, monospace; font-size: 12.5px; color: var(--muted); white-space: nowrap; padding-top: 3px; min-width: 108px; }
+  .tech-item .v { font-size: 14.5px; line-height: 1.8; color: var(--muted); }
+  .tech-item .v b { color: var(--text); font-weight: 650; }
+  .tech-item .v code { font-family: ui-monospace, monospace; font-size: 13px; background: rgba(255,255,255,.07); padding: 2px 6px; border-radius: 5px; color: var(--pink-soft); }
+
+  /* ===== 图标 ===== */
+  .appicon {
+    width: 128px; height: 128px; border-radius: 30px; margin-bottom: 34px;
+    box-shadow: 0 22px 60px rgba(251,114,153,.34);
+    animation: float 5s ease-in-out infinite;
+  }
+  @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-13px); } }
+  .appicon-sm { width: 62px; height: 62px; border-radius: 15px; }
+
+  /* ===== 下载页 ===== */
+  .repo-card {
+    margin-top: 40px; padding: 32px 36px; border-radius: 20px; text-align: left;
+    background: var(--card); border: 1px solid rgba(251,114,153,.3);
+    max-width: 780px; width: 100%;
+  }
+  .repo-card .row { display: flex; align-items: center; gap: 18px; }
+  .repo-card .url {
+    font-family: ui-monospace, monospace; font-size: 17px; color: var(--pink-soft);
+    word-break: break-all; font-weight: 600;
+  }
+  .repo-card .sub { margin-top: 18px; font-size: 14.5px; color: var(--muted); line-height: 1.9; }
+  .steps { margin-top: 26px; display: grid; gap: 11px; }
+  .step { display: flex; gap: 14px; align-items: baseline; font-size: 14.5px; color: var(--muted); line-height: 1.7; }
+  .step .n {
+    flex: none; width: 22px; height: 22px; border-radius: 50%;
+    background: rgba(251,114,153,.15); color: var(--pink-soft);
+    font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+  }
+  .tagline-pills { display: flex; gap: 11px; flex-wrap: wrap; margin-top: 30px; justify-content: center; }
+  .pill { padding: 9px 18px; border-radius: 999px; font-size: 13.5px; border: 1px solid var(--line); background: var(--card); color: var(--muted); }
+  .pill.hot { border-color: rgba(251,114,153,.45); color: var(--pink-soft); background: rgba(251,114,153,.1); }
+
+  /* ===== 底部控件 ===== */
+  #hud {
+    position: fixed; bottom: 22px; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: center; gap: 22px;
+    font-size: 12px; color: var(--dim); letter-spacing: 1px; pointer-events: none;
+  }
+  #hud .sep { opacity: .35; }
+  #pauseflag { color: var(--pink); font-weight: 700; opacity: 0; transition: opacity .2s; }
+  #pauseflag.on { opacity: 1; }
+  #dots { position: fixed; bottom: 26px; right: 28px; z-index: 100; display: flex; gap: 6px; }
+  #dots i { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,.16); transition: all .3s; }
+  #dots i.on { background: var(--pink); width: 20px; border-radius: 3px; }
+
+  @media (max-width: 900px) {
+    .split, .split.wide { grid-template-columns: 1fr; gap: 30px; text-align: center; }
+    .bullets { text-align: left; }
+    .cards, .cards.c3 { grid-template-columns: 1fr; }
+    .slide { padding: 40px 26px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="aurora"><span></span><span></span><span></span></div>
+<div id="progress-track"><div id="progress-bar"></div></div>
+
+<div class="deck" id="deck">
+
+  <!-- 1 封面 -->
+  <section class="slide" data-dur="6">
+    <img class="appicon anim" src="images/icon.webp" alt="BiliPlayer">
+    <h1 class="anim grad">BiliPlayer</h1>
+    <p class="lead anim">用无头浏览器驱动的 B 站音乐播放器<br>读取收藏夹 · 后台播放 · 系统级控制 · 边听边看 MV</p>
+    <div class="tagline-pills anim">
+      <span class="pill hot">无头 WebView</span>
+      <span class="pill">纯 DOM 抓取</span>
+      <span class="pill">不调用任何 API</span>
+    </div>
+    <p class="hint anim">空格 暂停 / 播放　·　← → 翻页　·　默认自动播放</p>
+  </section>
+
+  <!-- 2 目录 -->
+  <section class="slide" data-dur="7">
+    <div class="kicker anim">CONTENTS</div>
+    <h2 class="anim">这次演示什么</h2>
+    <div class="cards anim">
+      <div class="card"><div class="ico">🎯</div><h4>核心流程</h4><p>设置 → 登录 → 抓取收藏夹 → 播放</p></div>
+      <div class="card"><div class="ico">🎵</div><h4>播放体验</h4><p>播放器、MV 全屏、播放列表、单曲偏好</p></div>
+      <div class="card"><div class="ico">🔔</div><h4>系统集成</h4><p>通知栏、锁屏、蓝牙、后台播放、定时关闭</p></div>
+      <div class="card"><div class="ico">⚙️</div><h4>技术 & 下载</h4><p>无头浏览器原理、开源仓库与安装</p></div>
+    </div>
+  </section>
+
+  <!-- 3 它是什么 -->
+  <section class="slide" data-dur="8">
+    <div class="kicker anim">WHAT IS IT</div>
+    <h2 class="anim">把 B 站收藏夹，变成随身播放器</h2>
+    <p class="lead anim">
+      BiliPlayer 不是又一款客户端，而是一次「用浏览器当播放器」的尝试。<br>
+      它用一个离屏 WebView 打开 B 站页面，把视频里的音频播出来，<br>
+      同时接管系统媒体控制，让你像用本地播放器一样听收藏夹。
+    </p>
+    <ul class="bullets anim" style="max-width:620px;text-align:left">
+      <li>不需要 B 站账号也能听公开收藏夹</li>
+      <li class="b">不调用任何 B 站 API，完全模拟真实浏览器</li>
+      <li class="g">退到后台、锁屏、切应用，音乐都不中断</li>
+    </ul>
+  </section>
+
+  <!-- 4 设置页 -->
+  <section class="slide" data-dur="8">
+    <div class="split">
+      <div class="body">
+        <div class="kicker anim">STEP 1</div>
+        <h2 class="anim">输入 UID 与收藏夹</h2>
+        <p class="anim">填入 B 站 UID 和收藏夹名称，一键开始。所有配置都会自动保存，下次打开无需重填。</p>
+        <ul class="bullets anim">
+          <li><strong>UID</strong>：B 站空间地址中的数字</li>
+          <li><strong>收藏夹名</strong>：需为公开收藏夹</li>
+          <li class="b"><strong>自动全屏</strong>：可选，勾选后播放时自动进入网页全屏</li>
+          <li class="g"><strong>登录入口</strong>：可直接登录 B 站账号</li>
+        </ul>
+      </div>
+      <div class="shot anim">
+        <img src="images/setup.png" alt="设置页" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <div class="ph"><div class="ico">⚙️</div><div class="name">images/setup.png</div><div class="desc">设置页：UID、收藏夹名、自动全屏勾选、登录按钮、开始播放</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 登录 -->
+  <section class="slide" data-dur="8">
+    <div class="split">
+      <div class="shot anim">
+        <img src="images/login.png" alt="登录页" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <div class="ph"><div class="ico">🔐</div><div class="name">images/login.png</div><div class="desc">B 站登录页 + 返回按钮 + 隐私说明</div></div>
+      </div>
+      <div class="body">
+        <div class="kicker blue anim">LOGIN</div>
+        <h2 class="anim">登录 B 站，解锁私密收藏夹</h2>
+        <p class="anim">应用内置一个 PC 端登录页，使用桌面版 UA，登录体验与电脑一致。登录后即可访问私密收藏夹。</p>
+        <ul class="bullets anim">
+          <li><strong>Cookie 只存在本地 WebView</strong>，应用不做任何上传</li>
+          <li class="b">抓取收藏夹时自动携带登录态</li>
+          <li class="g">随时可退出登录，不留痕迹</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 抓取 -->
+  <section class="slide" data-dur="9">
+    <div class="split">
+      <div class="body">
+        <div class="kicker anim">SCRAPING</div>
+        <h2 class="anim">无头浏览器抓取收藏夹</h2>
+        <p class="anim">离屏 WebView 打开收藏夹页面，模拟真实鼠标与触摸完成点击，抓取每条视频的 BV 号、标题与封面。</p>
+        <ul class="bullets anim">
+          <li><strong>真实触摸事件</strong>：绕过 <code>isTrusted</code> 检测</li>
+          <li><strong>自动点击侧栏</strong>收藏夹，失败时提示手动介入</li>
+          <li class="b">纯 DOM 解析，<strong>零 API 调用</strong></li>
+        </ul>
+      </div>
+      <div class="shot anim">
+        <img src="images/fetching.png" alt="抓取进度" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <div class="ph"><div class="ico">📥</div><div class="name">images/fetching.png</div><div class="desc">抓取中：进度条 + 「第 2 页/共 3 页, 已抓取 67 个/共 101 个」</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 翻页进度 -->
+  <section class="slide" data-dur="8">
+    <div class="kicker anim">PAGINATION</div>
+    <h2 class="anim">自动翻页，抓完为止</h2>
+    <p class="lead anim">收藏夹有几十上百条视频时，会自动翻页继续抓取，直到「下一页」按钮变成不可用。</p>
+    <ul class="bullets anim" style="max-width:640px;text-align:left">
+      <li><strong>解析分页信息</strong>：「共 X 页 / Y 个」</li>
+      <li class="b"><strong>实时进度条</strong>：第 X 页 / 共 Y 页</li>
+      <li class="g"><strong>元素未就绪时</strong>显示无限加载动画，不显示假进度</li>
+      <li>受 B 站自身限制，实际抓取数可能少于页面显示的总数</li>
+    </ul>
+  </section>
+
+  <!-- 8 播放器 -->
+  <section class="slide" data-dur="8">
+    <div class="split">
+      <div class="shot anim">
+        <img src="images/player.png" alt="播放器" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <div class="ph"><div class="ico">🎵</div><div class="name">images/player.png</div><div class="desc">播放器：封面、标题、进度条、控制按钮、音量、模式、定时</div></div>
+      </div>
+      <div class="body">
+        <div class="kicker blue anim">PLAYER</div>
+        <h2 class="anim">播放器主界面</h2>
+        <p class="anim">抓取完成后自动进入播放器，开始播放第一首（随机模式下随机挑选起点）。</p>
+        <ul class="bullets anim">
+          <li><strong>进度条</strong>：实时显示，可拖动跳转</li>
+          <li><strong>控制区</strong>：上一首 / 播放暂停 / 下一首</li>
+          <li class="b"><strong>音量滑块</strong>与<strong>播放模式</strong>一键切换</li>
+          <li class="g">隐藏画面时显示<strong>高清封面</strong></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9 播放模式 -->
+  <section class="slide" data-dur="8">
+    <div class="kicker blue anim">PLAY MODE</div>
+    <h2 class="anim">三种播放模式</h2>
+    <div class="cards c3 anim">
+      <div class="card"><div class="ico">➡️</div><h4>顺序播放</h4><p>按收藏夹顺序依次播放，播完回到第一首。</p></div>
+      <div class="card"><div class="ico">🔀</div><h4>随机播放</h4><p>无重复洗牌：整轮内不重复，播完一轮自动重新洗牌。</p></div>
+      <div class="card"><div class="ico">🔂</div><h4>单曲循环</h4><p>反复播放当前这首，直到你手动切换。</p></div>
+    </div>
+    <p class="lead anim" style="margin-top:36px">随机模式还会在启动时随机挑选起始曲目，不会每次都从第一首开始。</p>
+  </section>
+
+  <!-- 10 MV -->
+  <section class="slide" data-dur="9">
+    <div class="split wide">
+      <div class="body">
+        <div class="kicker anim">MV MODE</div>
+        <h2 class="anim">边听边看 MV</h2>
+        <p class="anim">点击「显示画面」，WebView 就会呈现在界面上方。视频加载完成后自动进入网页全屏，并隐藏播放器控制条，沉浸式观看。</p>
+        <ul class="bullets anim">
+          <li><strong>自动网页全屏</strong>，无需手动点击</li>
+          <li><strong>自动隐藏控制条</strong>，画面更干净</li>
+          <li class="b">一键切换<strong>显示 / 隐藏</strong>，隐藏时回到封面模式</li>
+          <li class="g">播放时画面不可误触，避免跳转</li>
+        </ul>
+      </div>
+      <div class="shot land anim">
+        <img src="images/fullscreen.png" alt="全屏 MV" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <div class="ph"><div class="ico">🎬</div><div class="name">images/fullscreen.png</div><div class="desc">横屏截图：网页全屏后的 MV 画面（无控制条）</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 11 播放列表 -->
+  <section class="slide" data-dur="8">
+    <div class="split">
+      <div class="shot anim">
+        <img src="images/playlist.png" alt="播放列表" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <div class="ph"><div class="ico">📋</div><div class="name">images/playlist.png</div><div class="desc">播放列表：封面缩略图 + 当前曲目标记</div></div>
+      </div>
+      <div class="body">
+        <div class="kicker blue anim">PLAYLIST</div>
+        <h2 class="anim">播放列表</h2>
+        <p class="anim">底部导航栏一键进入播放列表，每条都带封面缩略图，当前播放的曲目高亮标记。</p>
+        <ul class="bullets anim">
+          <li><strong>点击</strong>任意一条立即播放</li>
+          <li class="b"><strong>长按</strong>进入该曲的偏好设置</li>
+          <li class="g">长按也可直接<strong>从列表删除</strong></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 12 单曲偏好 -->
+  <section class="slide" data-dur="9">
+    <div class="split">
+      <div class="body">
+        <div class="kicker anim">PREFERENCE</div>
+        <h2 class="anim">单曲偏好：分P、开始、结束</h2>
+        <p class="anim">每一首歌都可以单独配置，按 BV 号独立保存，下次播放自动生效。</p>
+        <ul class="bullets anim">
+          <li><strong>分 P</strong>：选择播放第几个分 P</li>
+          <li><strong>开始秒</strong>：跳过片头，直接进入正题</li>
+          <li class="b"><strong>结束秒</strong>：到点自动切下一首（自动截断）</li>
+          <li class="g">设置仅对当前曲目生效，互不影响</li>
+        </ul>
+      </div>
+      <div class="shot anim">
+        <img src="images/pref.png" alt="偏好设置" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <div class="ph"><div class="ico">⚡</div><div class="name">images/pref.png</div><div class="desc">长按弹窗：分P 下拉、开始秒、结束秒、保存/删除</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 13 系统控制 -->
+  <section class="slide" data-dur="9">
+    <div class="kicker anim">SYSTEM</div>
+    <h2 class="anim">系统级媒体控制</h2>
+    <p class="lead anim">应用注册了系统 MediaSession，锁屏、通知栏、蓝牙耳机都能控制播放。</p>
+    <div class="cards anim">
+      <div class="card"><div class="ico">🔔</div><h4>通知栏控制</h4><p>上一首 / 播放暂停 / 下一首，折叠态直接可用，封面标题实时同步。</p></div>
+      <div class="card"><div class="ico">🔒</div><h4>锁屏控制</h4><p>锁屏显示正在播放，可拖动进度条跳转、切换曲目。</p></div>
+      <div class="card"><div class="ico">🎧</div><h4>蓝牙耳机</h4><p>蓝牙与线控的播放暂停、上下曲按键全部生效。</p></div>
+      <div class="card"><div class="ico">🖼️</div><h4>封面与进度</h4><p>系统界面显示当前歌曲封面、总时长与实时进度。</p></div>
+    </div>
+  </section>
+
+  <!-- 14 后台播放 -->
+  <section class="slide" data-dur="9">
+    <div class="split wide">
+      <div class="body">
+        <div class="kicker blue anim">BACKGROUND</div>
+        <h2 class="anim">退到后台、锁屏，音乐不停</h2>
+        <p class="anim">应用使用前台服务常驻，并配合部分唤醒锁与一个始终保持渲染的 WebView，让音频在各种场景下持续播放。</p>
+        <ul class="bullets anim">
+          <li><strong>前台服务保活</strong>，切应用不中断</li>
+          <li><strong>锁屏、息屏继续播放</strong></li>
+          <li class="b"><strong>状态丢失自动重载</strong>，并续播到上次位置</li>
+          <li class="g">视频失效自动切换下一首</li>
+        </ul>
+      </div>
+      <div class="shot land anim">
+        <img src="images/lockscreen.png" alt="锁屏控制" onload="this.nextElementSibling.style.display='none'" onerror="this.style.display='none'">
+        <div class="ph"><div class="ico">🔒</div><div class="name">images/lockscreen.png</div><div class="desc">锁屏界面：封面 + 进度条 + 控制按钮</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 15 定时关闭 -->
+  <section class="slide" data-dur="8">
+    <div class="kicker blue anim">SLEEP TIMER</div>
+    <h2 class="anim">定时关闭</h2>
+    <p class="lead anim">睡前听歌不想爬起来关掉？设置一个定时，到点自动处理。</p>
+    <div class="cards anim">
+      <div class="card"><div class="ico">⏱️</div><h4>预设时长</h4><p>5 / 10 / 15 / 30 / 60 分钟，一键选择。</p></div>
+      <div class="card"><div class="ico">✏️</div><h4>自定义时长</h4><p>输入任意分钟数，精确到你需要的时间。</p></div>
+      <div class="card"><div class="ico">⏸️</div><h4>到点暂停</h4><p>时间到后暂停播放，应用保持运行，随时可继续。</p></div>
+      <div class="card"><div class="ico">🚪</div><h4>到点退出</h4><p>时间到后停止播放并关闭前台服务与通知。</p></div>
+    </div>
+  </section>
+
+  <!-- 16 持久化 -->
+  <section class="slide" data-dur="8">
+    <div class="kicker anim">PERSISTENCE</div>
+    <h2 class="anim">所有配置自动保存</h2>
+    <p class="lead anim">不需要手动保存，也不需要重复设置。下次打开，一切照旧。</p>
+    <div class="cards anim">
+      <div class="card"><div class="ico">👤</div><h4>UID 与收藏夹名</h4><p>打开即预填，直接点开始播放。</p></div>
+      <div class="card"><div class="ico">🔊</div><h4>默认音量</h4><p>记住你习惯的音量，不必每次重调。</p></div>
+      <div class="card"><div class="ico">🔀</div><h4>播放模式</h4><p>上次用的顺序 / 随机 / 单曲，下次继续。</p></div>
+      <div class="card"><div class="ico">⚡</div><h4>每首歌的偏好</h4><p>分P、开始秒、结束秒按 BV 号独立保存。</p></div>
+    </div>
+  </section>
+
+  <!-- 17 技术实现 -->
+  <section class="slide" data-dur="10">
+    <div class="kicker anim">UNDER THE HOOD</div>
+    <h2 class="anim">技术实现</h2>
+    <div class="tech-list anim">
+      <div class="tech-item">
+        <div class="k">WebView</div>
+        <div class="v"><b>离屏无头浏览器</b>：不占用界面，但始终保持渲染，让 B 站的懒加载、IntersectionObserver 正常工作，否则页面内容根本抓不到。</div>
+      </div>
+      <div class="tech-item">
+        <div class="k">Touch</div>
+        <div class="v"><b>真实触摸事件</b>：用 <code>dispatchTouchEvent</code> 注入真实手指点击。JS 的 <code>element.click()</code> 是 <code>isTrusted=false</code> 的非可信事件，会被 B 站忽略。</div>
+      </div>
+      <div class="tech-item">
+        <div class="k">Scraping</div>
+        <div class="v"><b>纯 DOM 抓取</b>：解析收藏夹页面结构，自动翻页，<b>不调用任何 B 站 API</b>，也不依赖任何第三方接口。</div>
+      </div>
+      <div class="tech-item">
+        <div class="k">MediaSession</div>
+        <div class="v"><b>系统媒体会话</b>：接管锁屏、蓝牙与通知栏，播放进度与封面毫秒级同步，并支持从系统侧拖动进度。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 18 下载 -->
+  <section class="slide" data-dur="12">
+    <div class="kicker anim">DOWNLOAD</div>
+    <h2 class="anim">开源 · 免费下载</h2>
+    <div class="repo-card anim">
+      <div class="row">
+        <img class="appicon-sm" src="images/icon.webp" alt="">
+        <div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:6px">GitHub 仓库</div>
+          <div class="url">github.com/Gingmzmzx/BiliPlayer-android</div>
+        </div>
+      </div>
+      <div class="sub">
+        项目完全开源，采用 Apache License 2.0。<br>
+        欢迎 Star、提交 issue 反馈问题，或参与贡献代码。
+      </div>
+      <div class="steps">
+        <div class="step"><span class="n">1</span><span>打开仓库 Releases 页面，下载最新的 <code style="font-family:ui-monospace,monospace;color:var(--pink-soft)">app-debug.apk</code></span></div>
+        <div class="step"><span class="n">2</span><span>在手机上允许「安装未知来源应用」</span></div>
+        <div class="step"><span class="n">3</span><span>点击安装，打开即用</span></div>
+        <div class="step"><span class="n">4</span><span>需要自行构建？克隆仓库后运行 <code style="font-family:ui-monospace,monospace;color:var(--pink-soft)">./gradlew assembleDebug</code></span></div>
+      </div>
+    </div>
+    <p class="hint anim">参考项目：github.com/Gingmzmzx/BiliPlayer（桌面端 Python 版）</p>
+  </section>
+
+  <!-- 19 结尾 -->
+  <section class="slide" data-dur="8">
+    <img class="appicon anim" src="images/icon.webp" alt="BiliPlayer">
+    <h2 class="anim grad-pink">把收藏夹变成随身播放器</h2>
+    <p class="lead anim">后台播放 · 系统控制 · 边听边看</p>
+    <div class="tagline-pills anim">
+      <span class="pill hot">BiliPlayer for Android</span>
+      <span class="pill">Apache License 2.0</span>
+    </div>
+    <p class="hint anim">github.com/Gingmzmzx/BiliPlayer-android</p>
+  </section>
+
+</div>
+
+<div id="hud">
+  <span id="counter">1 / 19</span>
+  <span class="sep">·</span>
+  <span>空格 暂停</span>
+  <span class="sep">·</span>
+  <span>← → 翻页</span>
+  <span class="sep">·</span>
+  <span id="pauseflag">已暂停</span>
+</div>
+<div id="dots"></div>
+
+<script>
+(function () {
+  const slides = [...document.querySelectorAll('.slide')];
+  const bar = document.getElementById('progress-bar');
+  const counter = document.getElementById('counter');
+  const dots = document.getElementById('dots');
+  const pauseFlag = document.getElementById('pauseflag');
+
+  let cur = 0;
+  let timer = null;
+  let paused = false;
+
+  // 生成右下角圆点
+  slides.forEach(() => dots.appendChild(document.createElement('i')));
+
+  function setProgressAnim(idx) {
+    bar.classList.remove('run');
+    // 触发重排以重启动画
+    void bar.offsetWidth;
+    const dur = parseInt(slides[idx].dataset.dur || '8', 10);
+    bar.style.animationDuration = dur + 's';
+    bar.classList.add('run');
+  }
+
+  function schedule(idx) {
+    clearTimeout(timer);
+    const dur = parseInt(slides[idx].dataset.dur || '8', 10);
+    timer = setTimeout(() => go(idx + 1, true), dur * 1000);
+  }
+
+  function go(idx, auto) {
+    if (idx >= slides.length) {
+      // 最后一页后停在结尾，不再循环
+      paused = true;
+      pauseFlag.classList.add('on');
+      pauseFlag.textContent = '演示结束';
+      bar.classList.remove('run');
+      return;
+    }
+    if (idx < 0) idx = 0;
+
+    slides[cur].classList.remove('active');
+    cur = idx;
+    slides[cur].classList.add('active');
+
+    counter.textContent = (cur + 1) + ' / ' + slides.length;
+    [...dots.children].forEach((d, i) => d.classList.toggle('on', i === cur));
+
+    if (!paused) {
+      setProgressAnim(cur);
+      schedule(cur);
+    }
+  }
+
+  function togglePause() {
+    if (cur >= slides.length - 1 && paused) return;
+    paused = !paused;
+    pauseFlag.classList.toggle('on', paused);
+    pauseFlag.textContent = '已暂停';
+    if (paused) {
+      clearTimeout(timer);
+      bar.classList.remove('run');
+    } else {
+      setProgressAnim(cur);
+      schedule(cur);
+    }
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') { e.preventDefault(); togglePause(); }
+    else if (e.code === 'ArrowRight' || e.code === 'PageDown') {
+      e.preventDefault(); paused = false; pauseFlag.classList.remove('on'); go(cur + 1);
+    }
+    else if (e.code === 'ArrowLeft' || e.code === 'PageUp') {
+      e.preventDefault(); paused = false; pauseFlag.classList.remove('on'); go(cur - 1);
+    }
+    else if (e.code === 'Home') { paused = false; pauseFlag.classList.remove('on'); go(0); }
+    else if (e.code === 'End') { paused = false; pauseFlag.classList.remove('on'); go(slides.length - 1); }
+  });
+
+  // 点击右半屏下一页，左半屏上一页
+  document.getElementById('deck').addEventListener('click', (e) => {
+    paused = false; pauseFlag.classList.remove('on');
+    if (e.clientX > window.innerWidth / 2) go(cur + 1);
+    else go(cur - 1);
+  });
+
+  // 触摸滑动
+  let touchX = 0;
+  document.addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; });
+  document.addEventListener('touchend', (e) => {
+    const dx = e.changedTouches[0].clientX - touchX;
+    if (Math.abs(dx) < 50) return;
+    paused = false; pauseFlag.classList.remove('on');
+    go(dx < 0 ? cur + 1 : cur - 1);
+  });
+
+  go(0);
+})();
+</script>
+</body>
+</html>

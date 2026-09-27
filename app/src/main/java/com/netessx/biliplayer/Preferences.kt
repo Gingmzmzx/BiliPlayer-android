@@ -13,6 +13,8 @@ object Preferences {
     private const val KEY_PLAY_MODE = "play_mode"
     private const val KEY_P_PREF = "p_pref"
     private const val KEY_AUTO_FULLSCREEN = "auto_fullscreen"
+    private const val KEY_LAST_NOTICE_ID = "last_notice_id"
+    private const val KEY_IGNORED_UPDATE_CODE = "ignored_update_code"
 
     private fun sp(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -46,6 +48,18 @@ object Preferences {
     fun autoFullscreen(context: Context): Boolean = sp(context).getBoolean(KEY_AUTO_FULLSCREEN, true)
     fun saveAutoFullscreen(context: Context, v: Boolean) {
         sp(context).edit().putBoolean(KEY_AUTO_FULLSCREEN, v).apply()
+    }
+
+    // ----- 已读公告 id（公告 id 单调递增，用它做去重） -----
+    fun lastSeenNoticeId(context: Context): Long = sp(context).getLong(KEY_LAST_NOTICE_ID, 0L)
+    fun saveLastSeenNoticeId(context: Context, id: Long) {
+        sp(context).edit().putLong(KEY_LAST_NOTICE_ID, id).apply()
+    }
+
+    // ----- 已忽略的更新版本（按 versionCode 记录，不能用 versionName） -----
+    fun ignoredUpdateVersionCode(context: Context): Int = sp(context).getInt(KEY_IGNORED_UPDATE_CODE, -1)
+    fun saveIgnoredUpdateVersionCode(context: Context, code: Int) {
+        sp(context).edit().putInt(KEY_IGNORED_UPDATE_CODE, code).apply()
     }
 
     // ----- 每首歌的偏好（bvid -> {p, beginTime, endTime}） -----

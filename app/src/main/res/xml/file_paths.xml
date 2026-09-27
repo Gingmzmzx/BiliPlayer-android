@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 暴露给系统安装器的目录：应用内下载的更新产物 -->
+<paths>
+    <cache-path
+        name="updates"
+        path="updates/" />
+</paths>

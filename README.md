@@ -2,6 +2,9 @@
 
 一个用**无头浏览器**实现的 B 站（Bilibili）音乐播放器。参考桌面端项目 [Gingmzmzx/BiliPlayer](https://github.com/Gingmzmzx/BiliPlayer)（Python + Playwright）的思路，改用 **Android WebView** 作为播放引擎，在手机上实现"读取收藏夹 → 后台纯音频播放 → 系统级媒体控制"。
 
+> 🌐 **官网 / 下载**：<https://apps.netessx.com/BiliPlayerAndroid>
+> 站点上始终是最新版本，可直接下载 APK，也能查看更新内容与公告。
+
 ## 📱 截图
 
 <table>
@@ -60,6 +63,10 @@ WebView 同时也是视频画面显示层——显示 WebView 时，用户可以
 
 产物：`app/build/outputs/apk/debug/app-debug.apk`
 
+`versionCode` 由构建脚本自动生成，格式为 **年 + 月 + 日 + 当日构建数**（`YYMMDDNN`），例如 `26092701` 表示 26 年 9 月 27 日的第 1 次构建。日期与计数保存在根目录 `build-stamp.properties`（已加入 `.gitignore`），跨天自动归零重新计数。
+
+不想自己编译，可直接从官网下载：<https://apps.netessx.com/BiliPlayerAndroid>
+
 ## 📱 使用
 
 1. 安装并打开 App，进入设置页。
@@ -74,6 +81,11 @@ WebView 同时也是视频画面显示层——显示 WebView 时，用户可以
 - **首次抓取失败**：WebView 冷启动较慢，已通过启动预热缓解；仍失败可重试。
 - **自动全屏导致误触**：主界面 WebView 已加透明触摸拦截层（抓取阶段不屏蔽，便于手动介入）。
 - **后台播放被系统杀掉**：请在系统设置中允许本应用后台运行 / 加入省电白名单。
+
+## 🔗 链接
+
+- 官网 / 下载：<https://apps.netessx.com/BiliPlayerAndroid>
+- 上游桌面版项目：[Gingmzmzx/BiliPlayer](https://github.com/Gingmzmzx/BiliPlayer)
 
 ## 📄 致谢
 

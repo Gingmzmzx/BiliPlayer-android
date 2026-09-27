@@ -74,6 +74,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -101,6 +102,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.netessx.biliplayer.ui.theme.BiliPlayerTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
@@ -134,6 +136,14 @@ fun BiliPlayerApp() {
     var currentTab by remember { mutableStateOf(AppTab.PLAYER) }
     var showLogin by remember { mutableStateOf(false) }
 
+    // 更新 / 公告状态
+    val scope = rememberCoroutineScope()
+    var updateInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
+    var noticeInfo by remember { mutableStateOf<NoticeInfo?>(null) }
+    var downloading by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf(0) }
+    var downloadMessage by remember { mutableStateOf<String?>(null) }
+
     // 申请通知权限（API 33+，用于前台服务通知）
     val notifPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) {
@@ -143,6 +153,19 @@ fun BiliPlayerApp() {
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    // 冷启动检查一次更新与公告（放在这里而非 onResume，避免每次切前台都请求）
+    LaunchedEffect(Unit) {
+        // 404 / 超时 / 网络异常都已在 AppPublisher 内部静默，拿到 null 即跳过
+        val ignored = Preferences.ignoredUpdateVersionCode(context)
+        AppPublisher.checkUpdate(BuildConfig.VERSION_CODE)?.let { info ->
+            if (info.versionCode != ignored) updateInfo = info
+        }
+        val seen = Preferences.lastSeenNoticeId(context)
+        AppPublisher.fetchLatestNotice()?.let { n ->
+            if (n.id > seen) noticeInfo = n
         }
     }
 
@@ -265,6 +288,164 @@ fun BiliPlayerApp() {
                 }
             }
         }
+    }
+
+    // ---------- 更新弹窗 ----------
+    updateInfo?.let { info ->
+        UpdateDialog(
+            info = info,
+            onLater = { updateInfo = null },
+            onIgnore = {
+                // 「忽略此版本」按 versionCode 记录
+                Preferences.saveIgnoredUpdateVersionCode(context, info.versionCode)
+                updateInfo = null
+            },
+            onDownload = {
+                updateInfo = null
+                downloading = true
+                downloadProgress = 0
+                downloadMessage = null
+                scope.launch {
+                    // AppPublisher 内部已 try-catch，失败返回 null
+                    val file = AppPublisher.downloadRelease(context, info) { p -> downloadProgress = p }
+                    downloading = false
+                    when {
+                        file == null -> downloadMessage = "下载失败或校验未通过，请稍后重试"
+                        AppPublisher.isApk(file) -> AppPublisher.installApk(context, file)
+                        else -> downloadMessage = "已下载到：${file.absolutePath}"
+                    }
+                }
+            }
+        )
+    }
+
+    // ---------- 公告弹窗（等更新弹窗关掉再显示，避免叠在一起）----------
+    if (updateInfo == null) {
+        noticeInfo?.let { n ->
+            NoticeDialog(
+                info = n,
+                onDismiss = {
+                    // 看完才记录已读
+                    Preferences.saveLastSeenNoticeId(context, n.id)
+                    noticeInfo = null
+                }
+            )
+        }
+    }
+
+    if (downloading) {
+        DownloadDialog(progress = downloadProgress)
+    }
+
+    downloadMessage?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { downloadMessage = null },
+            title = { Text("提示") },
+            text = { Text(msg) },
+            confirmButton = { TextButton(onClick = { downloadMessage = null }) { Text("知道了") } }
+        )
+    }
+}
+
+@Composable
+private fun UpdateDialog(
+    info: ReleaseInfo,
+    onLater: () -> Unit,
+    onIgnore: () -> Unit,
+    onDownload: () -> Unit,
+) {
+    AlertDialog(
+        // 强制更新时不允许点外部关闭
+        onDismissRequest = { if (!info.forceUpdate) onLater() },
+        title = { Text("发现新版本 ${info.versionName}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val meta = buildString {
+                    append("版本号 ${info.versionCode}")
+                    val size = formatBytes(info.size)
+                    if (size.isNotEmpty()) append(" · $size")
+                    append(" · ${formatDate(info.timestamp)}")
+                }
+                Text(
+                    meta,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (info.forceUpdate) {
+                    Text(
+                        "此为强制更新",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                Text(info.desc.ifBlank { "本次更新没有提供说明" })
+            }
+        },
+        confirmButton = { TextButton(onClick = onDownload) { Text("下载更新") } },
+        dismissButton = {
+            Row {
+                if (!info.forceUpdate) {
+                    TextButton(onClick = onIgnore) { Text("忽略此版本") }
+                }
+                TextButton(onClick = onLater) { Text("稍后") }
+            }
+        }
+    )
+}
+
+@Composable
+private fun NoticeDialog(info: NoticeInfo, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(info.title.ifBlank { "公告" }) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    formatDate(info.timestamp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                // content 是纯文本，可能含换行
+                Text(info.content)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } }
+    )
+}
+
+@Composable
+private fun DownloadDialog(progress: Int) {
+    AlertDialog(
+        onDismissRequest = { },   // 下载中不可取消
+        title = { Text("正在下载更新") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                LinearProgressIndicator(
+                    progress = { progress / 100f },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text("$progress%", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { }
+    )
+}
+
+private fun formatBytes(bytes: Long): String = when {
+    bytes <= 0 -> ""                                  // size 是增量字段，可能为 0
+    bytes < 1024 -> "$bytes B"
+    bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
+    else -> "%.2f MB".format(bytes / 1024.0 / 1024.0)
+}
+
+/** timestamp 是 epoch 毫秒，java.util.Date 直接接收毫秒，无需换算。 */
+private fun formatDate(ms: Long): String {
+    if (ms <= 0) return "未知时间"
+    return try {
+        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date(ms))
+    } catch (e: Exception) {
+        "未知时间"
     }
 }
 

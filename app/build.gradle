@@ -1,6 +1,42 @@
+import org.gradle.api.provider.ValueSource
+import org.gradle.api.provider.ValueSourceParameters
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+// ============================================================
+// 自动 versionCode：年 + 月 + 日 + 当日构建数，格式 YYMMDDNN
+//   例：26092701 = 26 年 09 月 27 日的第 1 次构建
+//   日期与计数保存在根目录 build-stamp.properties，日期不是今天就归零重数。
+//   用 ValueSource 而不是在脚本里直接 new Date()：配置缓存
+//   （org.gradle.configuration-cache=true）复用时，带参数的 ValueSource
+//   会重新求值，避免版本号被缓存成上一次的旧值。
+// ============================================================
+def buildStamp = providers.of(BuildStampSource) {
+    it.parameters.stampFile.set(rootProject.layout.projectDirectory.file('build-stamp.properties').asFile)
+}.get()
+
+// 每次真正执行构建后把当日计数 +1（配置阶段只读不写）
+def bumpBuildStamp = tasks.register('bumpBuildStamp') {
+    description = '记录本次构建，使同一日期内的构建号递增'
+    def stampFile = rootProject.layout.projectDirectory.file('build-stamp.properties').asFile
+    outputs.upToDateWhen { false }
+    doLast {
+        String today = new Date().format(BuildStampSource.DATE_PATTERN)
+        def props = new Properties()
+        if (stampFile.exists()) {
+            stampFile.withInputStream { props.load(it) }
+        }
+        int count = (props.getProperty('date') == today) ? ((props.getProperty('count') ?: '0') as int) : 0
+        props.setProperty('date', today)
+        props.setProperty('count', String.valueOf(count + 1))
+        stampFile.withOutputStream { props.store(it, 'BiliPlayer build stamp') }
+    }
+}
+tasks.matching { it.name == 'preBuild' || it.name.startsWith('assemble') }.configureEach {
+    dependsOn(bumpBuildStamp)
 }
 
 android {
@@ -14,7 +50,7 @@ android {
         applicationId "com.netessx.biliplayer"
         minSdk 24
         targetSdk 36
-        versionCode 26082801
+        versionCode buildStamp.toInteger()
         versionName "1.2.0"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -54,4 +90,37 @@ dependencies {
     androidTestImplementation libs.androidx.junit
     debugImplementation libs.androidx.compose.ui.test.manifest
     debugImplementation libs.androidx.compose.ui.tooling
+}
+
+// ============================================================
+// versionCode 取值源：读 build-stamp.properties，算出 YYMMDDNN。
+// 只读不写，因此多次求值结果一致（配置缓存要求）。
+// ============================================================
+interface BuildStampParameters extends ValueSourceParameters {
+    Property<File> getStampFile()
+}
+
+abstract class BuildStampSource implements ValueSource<String, BuildStampParameters> {
+
+    static final String DATE_PATTERN = 'yyMMdd'
+
+    @Override
+    String obtain() {
+        String today = new Date().format(DATE_PATTERN)
+        try {
+            File stampFile = parameters.stampFile.get()
+            int count = 0
+            if (stampFile.exists()) {
+                def props = new Properties()
+                stampFile.withInputStream { props.load(it) }
+                if (props.getProperty('date') == today) {
+                    count = (props.getProperty('count') ?: '0') as int
+                }
+            }
+            return String.format('%s%02d', today, count + 1)
+        } catch (Exception e) {
+            // 文件不可读写时退化为当日第 1 次构建，不让构建直接失败
+            return today + '01'
+        }
+    }
 }

@@ -195,6 +195,15 @@
     background: rgba(251,114,153,.15); color: var(--pink-soft);
     font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center;
   }
+  .repo-card .cta {
+    display: inline-flex; align-items: center; gap: 10px; margin-top: 22px;
+    padding: 13px 30px; border-radius: 999px;
+    font-size: 15px; font-weight: 700; letter-spacing: .3px;
+    color: #101319; text-decoration: none;
+    background: linear-gradient(120deg, var(--pink-soft), var(--blue));
+    box-shadow: 0 12px 34px rgba(251,114,153,.35);
+  }
+  .repo-card .cta::after { content: '↗'; font-size: 15px; opacity: .75; }
   .tagline-pills { display: flex; gap: 11px; flex-wrap: wrap; margin-top: 30px; justify-content: center; }
   .pill { padding: 9px 18px; border-radius: 999px; font-size: 13.5px; border: 1px solid var(--line); background: var(--card); color: var(--muted); }
   .pill.hot { border-color: rgba(251,114,153,.45); color: var(--pink-soft); background: rgba(251,114,153,.1); }
@@ -248,7 +257,7 @@
       <div class="card"><div class="ico">🎯</div><h4>核心流程</h4><p>设置 → 登录 → 抓取收藏夹 → 播放</p></div>
       <div class="card"><div class="ico">🎵</div><h4>播放体验</h4><p>播放器、MV 全屏、播放列表、单曲偏好</p></div>
       <div class="card"><div class="ico">🔔</div><h4>系统集成</h4><p>通知栏、锁屏、蓝牙、后台播放、定时关闭</p></div>
-      <div class="card"><div class="ico">⚙️</div><h4>技术 & 下载</h4><p>无头浏览器原理、开源仓库与安装</p></div>
+      <div class="card"><div class="ico">⚙️</div><h4>技术 & 下载</h4><p>无头浏览器原理，以及官网下载与安装步骤</p></div>
     </div>
   </section>
 
@@ -530,19 +539,20 @@
       <div class="row">
         <img class="appicon-sm" src="https://apps.netessx.com/media/images/8d2b34ed49bd21adcc68cce84c7e4f92.webp" alt="">
         <div>
-          <div style="font-size:13px;color:var(--muted);margin-bottom:6px">GitHub 仓库</div>
-          <div class="url">github.com/Gingmzmzx/BiliPlayer-android</div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:6px">官方下载页</div>
+          <div class="url">apps.netessx.com/BiliPlayerAndroid/s/u65i38ch</div>
         </div>
       </div>
-      <div class="sub">
-        项目完全开源，采用 Apache License 2.0。<br>
-        欢迎 Star、提交 issue 反馈问题，或参与贡献代码。
-      </div>
+      <a class="cta" href="https://apps.netessx.com/BiliPlayerAndroid/s/u65i38ch" target="_blank" rel="noopener">下载链接会发在置顶评论或简介</a>
       <div class="steps">
-        <div class="step"><span class="n">1</span><span>打开仓库 Releases 页面，下载最新的 <code style="font-family:ui-monospace,monospace;color:var(--pink-soft)">app-debug.apk</code></span></div>
+        <div class="step"><span class="n">1</span><span>打开官方下载页，点「下载最新版」，直接拿到 <code style="font-family:ui-monospace,monospace;color:var(--pink-soft)">APK</code></span></div>
         <div class="step"><span class="n">2</span><span>在手机上允许「安装未知来源应用」</span></div>
         <div class="step"><span class="n">3</span><span>点击安装，打开即用</span></div>
-        <div class="step"><span class="n">4</span><span>需要自行构建？克隆仓库后运行 <code style="font-family:ui-monospace,monospace;color:var(--pink-soft)">./gradlew assembleDebug</code></span></div>
+        <div class="step"><span class="n">4</span><span>下载页上能看到版本号、大小、更新内容与公告；应用内也能一键检查更新</span></div>
+      </div>
+      <div class="sub">
+        源码在 <strong>GitHub</strong>：github.com/Gingmzmzx/BiliPlayer-android（Apache License 2.0）。<br>
+        欢迎 Star、提交 issue 反馈问题，或参与贡献代码；装应用请走上面的官方下载页。
       </div>
     </div>
     <p class="hint anim">参考项目：github.com/Gingmzmzx/BiliPlayer（桌面端 Python 版）</p>
@@ -557,7 +567,7 @@
       <span class="pill hot">BiliPlayer for Android</span>
       <span class="pill">Apache License 2.0</span>
     </div>
-    <p class="hint anim">github.com/Gingmzmzx/BiliPlayer-android</p>
+    <p class="hint anim">下载：apps.netessx.com/BiliPlayerAndroid/s/u65i38ch</p>
   </section>
 
 </div>

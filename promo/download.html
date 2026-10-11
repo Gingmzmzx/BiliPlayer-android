@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BiliPlayer · 把 B 站收藏夹变成随身播放器</title>
-<meta name="description" content="BiliPlayer —— 用无头浏览器驱动的 B 站音乐播放器。读取收藏夹、后台播放、灵动岛 / 锁屏与蓝牙媒体控制、边听边看 MV。开源免费。">
+<meta name="description" content="BiliPlayer —— 用无头浏览器驱动的 B 站音乐播放器。收藏夹一键导入并缓存为本地播放列表、后台播放、灵动岛 / 锁屏与蓝牙媒体控制、边听边看 MV。开源免费。">
 <style>
 /* ==========================================================================
    Material You (Material 3) 设计令牌
@@ -469,6 +469,21 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
         <h3 class="t-title">定时关闭</h3>
         <p class="t-body on-surface-variant">预设或自定义时长，到点自动暂停或退出应用。</p>
       </div>
+      <div class="card">
+        <div class="card-icon">📚</div>
+        <h3 class="t-title">播放列表库</h3>
+        <p class="t-body on-surface-variant">多个收藏夹各自成库，抓一次缓存到本地，之后打开即用。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon sec">🗂️</div>
+        <h3 class="t-title">同步与管理</h3>
+        <p class="t-body on-surface-variant">每个列表都能重新同步、重命名或删除，收藏夹变了点一下就拉回来。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon ter">🚫</div>
+        <h3 class="t-title">失效视频自动剔除</h3>
+        <p class="t-body on-surface-variant">遇到「视频不见了」自动跳过下一首，并从缓存里清掉，不再重复踩坑。</p>
+      </div>
     </div>
   </section>
 
@@ -483,7 +498,7 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
     <div class="feature">
       <div class="feature-body">
         <h3 class="t-headline">收藏夹抓取</h3>
-        <p class="t-body">填入 B 站 UID 与收藏夹名称，应用会在后台用一个无头浏览器打开收藏夹页面，自动点击进入目标收藏夹并读取每条视频。</p>
+        <p class="t-body">填入 B 站 UID 与收藏夹名称，应用会在后台用一个无头浏览器打开收藏夹页面，自动点击进入目标收藏夹并读取每条视频。<strong>抓完就缓存到本地</strong>，下次直接从播放列表库打开，不用再抓一遍。</p>
         <ul class="feature-list">
           <li><strong>真实触摸事件</strong>：用真实手势点击侧栏，绕过 <code>isTrusted</code> 检测</li>
           <li><strong>自动翻页</strong>：一路翻到「下一页」不可用为止</li>
@@ -535,8 +550,42 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
     </div>
 
-    <!-- 3 登录 -->
+    <!-- 3 播放列表库 -->
     <div class="feature">
+      <div class="feature-body">
+        <h3 class="t-headline">播放列表库</h3>
+        <p class="t-body">打开应用就是播放列表库。从收藏夹导入一次，曲目就缓存到本地，之后打开即用——不用再等浏览器把收藏夹重新抓一遍。</p>
+        <ul class="feature-list">
+          <li><strong>多个列表并存</strong>，每个收藏夹一份，互不干扰</li>
+          <li>抓取结果<strong>缓存到本地</strong>，冷启动直接读缓存</li>
+          <li>默认命名「收藏夹名 (uid)」，一眼看出是哪位的哪个收藏夹</li>
+          <li>同一收藏夹再次导入时<strong>就地覆盖</strong>，不会堆出一串重名条目</li>
+        
+          <li><strong>同步</strong>：收藏夹在 B 站变了，点一下重新抓取覆盖缓存</li>
+          <li><strong>重命名</strong>：改成你习惯的叫法，重新导入也不会被冲掉</li>
+          <li><strong>删除</strong>：连本地缓存一起清掉，收藏夹本身不受影响</li>
+        </ul>
+        <div class="chips">
+          <span class="chip assist">本地缓存</span>
+          <span class="chip assist">多列表</span>
+          <span class="chip assist">免重抓</span>
+        </div>
+      </div>
+      <div class="feature-media">
+        <div class="ph ph-phone">
+          <img src="/media/images/bc274c673b3574dadd7088e27f2d38db.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
+          <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+            <div class="ph-icon">📚</div>
+            <div class="ph-name">images/library.png</div>
+            <div class="ph-desc">播放列表库：多个列表 + 曲目数 + 最近更新时间</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- 4 登录 B 站 -->
+    <div class="feature flip">
       <div class="feature-body">
         <h3 class="t-headline">登录 B 站</h3>
         <p class="t-body">应用内置一个 PC 端登录页，登录后即可访问私密收藏夹。登录状态仅保存在本机 WebView 中。</p>
@@ -558,8 +607,8 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
     </div>
 
-    <!-- 4 播放器 -->
-    <div class="feature flip">
+    <!-- 5 播放器 -->
+    <div class="feature">
       <div class="feature-body">
         <h3 class="t-headline">播放器</h3>
         <p class="t-body">抓取完成后自动进入播放器开始播放。界面包含完整的播放控制，并且可以上下滚动，小屏也不会挤掉控件。</p>
@@ -582,8 +631,8 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
     </div>
 
-    <!-- 5 MV -->
-    <div class="feature">
+    <!-- 6 边听边看 MV -->
+    <div class="feature flip">
       <div class="feature-body">
         <h3 class="t-headline">边听边看 MV</h3>
         <p class="t-body">点击「显示画面」，浏览器画面就会出现在界面上方。视频加载完成后自动进入网页全屏，并隐藏播放器控制条。</p>
@@ -606,8 +655,8 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
     </div>
 
-    <!-- 6 播放列表 -->
-    <div class="feature flip">
+    <!-- 7 播放列表 -->
+    <div class="feature">
       <div class="feature-body">
         <h3 class="t-headline">播放列表</h3>
         <p class="t-body">底部导航栏一键进入播放列表，每条都带封面缩略图，当前播放的曲目会高亮标记。</p>
@@ -615,6 +664,9 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
           <li><strong>点击</strong>任意一条立即播放</li>
           <li><strong>长按</strong>进入该曲的偏好设置</li>
           <li>长按也可直接从列表<strong>删除</strong></li>
+        
+          <li>收藏夹里<strong>失效的视频会自动剔除</strong>并跳下一首</li>
+          <li>识别到「视频不见了」即刻处理，不卡在重载循环里</li>
         </ul>
       </div>
       <div class="feature-media">
@@ -629,8 +681,9 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
     </div>
 
-    <!-- 7 单曲偏好 -->
-    <div class="feature">
+
+    <!-- 8 单曲偏好 -->
+    <div class="feature flip">
       <div class="feature-body">
         <h3 class="t-headline">单曲偏好</h3>
         <p class="t-body">每一首歌都可以单独配置，按 BV 号独立保存，下次播放自动生效。</p>
@@ -652,8 +705,8 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
     </div>
 
-    <!-- 8 灵动岛 / 系统控制 -->
-    <div class="feature flip">
+    <!-- 9 灵动岛 &amp; 系统媒体控制 -->
+    <div class="feature">
       <div class="feature-body">
         <span class="chip hl" style="margin-bottom:10px">重点</span>
         <h3 class="t-headline">灵动岛 &amp; 系统媒体控制</h3>
@@ -791,6 +844,13 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       <summary>显示画面后为什么点不动？</summary>
       <div class="faq-body">
         播放时为避免误触跳转，画面区域默认屏蔽触摸。使用应用内的控制区和系统通知即可操作播放。
+      </div>
+    </details>
+
+    <details class="faq">
+      <summary>收藏夹里的视频失效了怎么办？</summary>
+      <div class="faq-body">
+        不用管。播放到失效视频时页面会显示「视频不见了」，应用会识别出这一页、自动把它从播放列表和本地缓存里删掉，然后接着播下一首，并弹一条提示告诉你跳过了哪一首。
       </div>
     </details>
 

@@ -254,8 +254,8 @@
     <div class="kicker anim">CONTENTS</div>
     <h2 class="anim">这次演示什么</h2>
     <div class="cards anim">
-      <div class="card"><div class="ico">🎯</div><h4>核心流程</h4><p>设置 → 登录 → 抓取收藏夹 → 播放</p></div>
-      <div class="card"><div class="ico">🎵</div><h4>播放体验</h4><p>播放器、MV 全屏、播放列表、单曲偏好</p></div>
+      <div class="card"><div class="ico">🎯</div><h4>核心流程</h4><p>播放列表库 → 导入收藏夹 → 缓存 → 播放</p></div>
+      <div class="card"><div class="ico">🎵</div><h4>播放体验</h4><p>播放器、MV 全屏、播放列表、单曲偏好、失效自动跳过</p></div>
       <div class="card"><div class="ico">🔔</div><h4>系统集成</h4><p>通知栏、锁屏、蓝牙、后台播放、定时关闭</p></div>
       <div class="card"><div class="ico">⚙️</div><h4>技术 & 下载</h4><p>无头浏览器原理，以及官网下载与安装步骤</p></div>
     </div>
@@ -277,12 +277,32 @@
     </ul>
   </section>
 
-  <!-- 4 设置页 -->
+  <!-- 4 打开就是播放列表库 -->
+  <section class="slide" data-dur="9">
+    <div class="split">
+      <div class="shot anim">
+        <img src="https://apps.netessx.com/media/images/bc274c673b3574dadd7088e27f2d38db.png" alt="打开就是播放列表库" onload="this.nextElementSibling.style.display='none';this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
+        <div class="ph"><div class="ico">📚</div><div class="name">library.png</div><div class="desc">播放列表库：多个列表 + 曲目数 + 最近更新时间</div></div>
+      </div>
+      <div class="body">
+        <div class="kicker anim">LIBRARY</div>
+        <h2 class="anim">打开就是播放列表库</h2>
+        <p class="anim">入口不再是一个空表单，而是你的播放列表库。每个收藏夹导入后就是库里的一条，曲目缓存在本地。</p>
+        <ul class="bullets anim">
+          <li><strong>多个列表并存</strong>，各管各的互不干扰</li>
+          <li class="b">抓一次<strong>缓存到本地</strong>，之后打开即用</li>
+          <li class="g">默认命名「收藏夹名 (uid)」，一眼认得出</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 设置页 -->
   <section class="slide" data-dur="8">
     <div class="split">
       <div class="body">
         <div class="kicker anim">STEP 1</div>
-        <h2 class="anim">输入 UID 与收藏夹</h2>
+        <h2 class="anim">从收藏夹导入</h2>
         <p class="anim">填入 B 站 UID 和收藏夹名称，一键开始。所有配置都会自动保存，下次打开无需重填。</p>
         <ul class="bullets anim">
           <li><strong>UID</strong>：B 站空间地址中的数字</li>
@@ -298,7 +318,7 @@
     </div>
   </section>
 
-  <!-- 5 登录 -->
+  <!-- 6 登录 -->
   <section class="slide" data-dur="8">
     <div class="split">
       <div class="shot anim">
@@ -318,7 +338,7 @@
     </div>
   </section>
 
-  <!-- 6 抓取 -->
+  <!-- 7 抓取 -->
   <section class="slide" data-dur="9">
     <div class="split">
       <div class="body">
@@ -338,7 +358,7 @@
     </div>
   </section>
 
-  <!-- 7 翻页进度 -->
+  <!-- 8 翻页进度 -->
   <section class="slide" data-dur="8">
     <div class="kicker anim">PAGINATION</div>
     <h2 class="anim">自动翻页，抓完为止</h2>
@@ -351,7 +371,7 @@
     </ul>
   </section>
 
-  <!-- 8 播放器 -->
+  <!-- 9 播放器 -->
   <section class="slide" data-dur="8">
     <div class="split">
       <div class="shot anim">
@@ -372,7 +392,7 @@
     </div>
   </section>
 
-  <!-- 9 播放模式 -->
+  <!-- 10 播放模式 -->
   <section class="slide" data-dur="8">
     <div class="kicker blue anim">PLAY MODE</div>
     <h2 class="anim">三种播放模式</h2>
@@ -384,7 +404,7 @@
     <p class="lead anim" style="margin-top:36px">随机模式还会在启动时随机挑选起始曲目，不会每次都从第一首开始。</p>
   </section>
 
-  <!-- 10 MV -->
+  <!-- 11 MV -->
   <section class="slide" data-dur="9">
     <div class="split wide">
       <div class="body">
@@ -405,7 +425,7 @@
     </div>
   </section>
 
-  <!-- 11 播放列表 -->
+  <!-- 12 播放列表 -->
   <section class="slide" data-dur="8">
     <div class="split">
       <div class="shot anim">
@@ -425,7 +445,32 @@
     </div>
   </section>
 
-  <!-- 12 单曲偏好 -->
+  <!-- 13 同步、重命名、删除 -->
+  <section class="slide" data-dur="9">
+    <div class="kicker blue anim">MANAGE</div>
+    <h2 class="anim">同步、重命名、删除</h2>
+    <p class="lead anim">每个列表右上角的菜单里都有这三个动作。收藏夹在 B 站那边变了，点一下同步就把最新曲目拉回来。</p>
+    <div class="cards c3 anim">
+      <div class="card"><div class="ico">🔄</div><h4>同步</h4><p>重新抓取该收藏夹，用最新曲目覆盖本地缓存，正播着的话会无缝换成新列表。</p></div>
+      <div class="card"><div class="ico">✏️</div><h4>重命名</h4><p>改成你习惯的叫法。<strong>重新导入也不会把名字冲掉</strong>。</p></div>
+      <div class="card"><div class="ico">🗑️</div><h4>删除</h4><p>连本地缓存一起清掉，B 站上的收藏夹本身不受影响。</p></div>
+    </div>
+  </section>
+
+  <!-- 14 失效视频自动剔除 -->
+  <section class="slide" data-dur="9">
+    <div class="kicker green anim">AUTO SKIP</div>
+    <h2 class="anim">视频失效？自动跳过</h2>
+    <p class="lead anim">收藏夹放久了总有视频被下架。页面一出现「视频不见了」，应用就把它清出去、接着播下一首。</p>
+    <div class="cards anim">
+      <div class="card"><div class="ico">🔍</div><h4>识别错误页</h4><p>认出「视频不见了」错误页当场判定失效，不用等视频加载超时。</p></div>
+      <div class="card"><div class="ico">🗑️</div><h4>双份删除</h4><p>内存里的播放列表和本地缓存同时删掉，下次启动不会又冒出来。</p></div>
+      <div class="card"><div class="ico">⏭️</div><h4>立刻换下一首</h4><p>删完直接播下一首，不卡在「状态丢失→重载」的死循环里。</p></div>
+      <div class="card"><div class="ico">💬</div><h4>弹提示告诉你</h4><p>Toast 提示跳过了哪一首，日志里也留一条记录。</p></div>
+    </div>
+  </section>
+
+  <!-- 15 单曲偏好 -->
   <section class="slide" data-dur="9">
     <div class="split">
       <div class="body">
@@ -446,7 +491,7 @@
     </div>
   </section>
 
-  <!-- 13 系统控制 -->
+  <!-- 16 系统控制 -->
   <section class="slide" data-dur="9">
     <div class="kicker anim">SYSTEM</div>
     <h2 class="anim">系统级媒体控制</h2>
@@ -459,7 +504,7 @@
     </div>
   </section>
 
-  <!-- 14 后台播放 -->
+  <!-- 17 后台播放 -->
   <section class="slide" data-dur="9">
     <div class="split wide">
       <div class="body">
@@ -481,7 +526,7 @@
     </div>
   </section>
 
-  <!-- 15 定时关闭 -->
+  <!-- 18 定时关闭 -->
   <section class="slide" data-dur="8">
     <div class="kicker blue anim">SLEEP TIMER</div>
     <h2 class="anim">定时关闭</h2>
@@ -494,7 +539,7 @@
     </div>
   </section>
 
-  <!-- 16 持久化 -->
+  <!-- 19 持久化 -->
   <section class="slide" data-dur="8">
     <div class="kicker anim">PERSISTENCE</div>
     <h2 class="anim">所有配置自动保存</h2>
@@ -507,7 +552,7 @@
     </div>
   </section>
 
-  <!-- 17 技术实现 -->
+  <!-- 20 技术实现 -->
   <section class="slide" data-dur="10">
     <div class="kicker anim">UNDER THE HOOD</div>
     <h2 class="anim">技术实现</h2>
@@ -531,7 +576,7 @@
     </div>
   </section>
 
-  <!-- 18 下载 -->
+  <!-- 21 下载 -->
   <section class="slide" data-dur="12">
     <div class="kicker anim">DOWNLOAD</div>
     <h2 class="anim">开源 · 免费下载</h2>
@@ -558,7 +603,7 @@
     <p class="hint anim">参考项目：github.com/Gingmzmzx/BiliPlayer（桌面端 Python 版）</p>
   </section>
 
-  <!-- 19 结尾 -->
+  <!-- 22 结尾 -->
   <section class="slide" data-dur="8">
     <img class="appicon anim" src="https://apps.netessx.com/media/images/8d2b34ed49bd21adcc68cce84c7e4f92.webp" alt="BiliPlayer">
     <h2 class="anim grad-pink">把收藏夹变成随身播放器</h2>

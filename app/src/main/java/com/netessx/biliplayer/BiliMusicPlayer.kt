@@ -30,6 +30,13 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
     var onStateUpdate: (() -> Unit)? = null
     var onLog: ((String) -> Unit)? = null
 
+    /**
+     * 视频失效（页面出现「视频不见了」）时回调，参数是失效的 bvid。
+     * 播放器自己会把它从内存播放列表里删掉并切下一首；
+     * 这个回调交给 PlayerController 去同步删掉本地缓存里的那一条。
+     */
+    var onTrackUnavailable: ((String) -> Unit)? = null
+
     var currentIndex: Int = -1
         private set
     var currentBvid: String = ""
@@ -192,18 +199,47 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         }
     }
 
+    /**
+     * 等 `<video>` 出现。轮询期间顺便探测「视频不见了」错误页——
+     * 那种页面永远不会有 `<video>`，等满超时只会白等，不如立刻判定失效。
+     */
     private fun waitForVideo() {
-        waitForJs(
-            "(function(){ return !!document.querySelector('video'); })()",
-            timeoutMs = 40000,
-            onReady = { onVideoReady() },
-            onTimeout = {
-                log("等待 <video> 元素超时")
-                loadingVideo = false
-                emit()
-            },
-        )
+        val startTime = System.currentTimeMillis()
+        val tick = object : Runnable {
+            override fun run() {
+                browser.evaluate(VIDEO_PROBE_JS) { raw ->
+                    when (unwrapString(raw)) {
+                        "ok" -> onVideoReady()
+                        "gone" -> onVideoGone()
+                        else -> if (System.currentTimeMillis() - startTime >= VIDEO_WAIT_MS) {
+                            log("等待 <video> 元素超时")
+                            loadingVideo = false
+                            emit()
+                        } else {
+                            mainHandler.postDelayed(this, POLL_MS)
+                        }
+                    }
+                }
+            }
+        }
+        mainHandler.post(tick)
     }
+
+    /**
+     * 当前视频失效：从播放列表删掉这一条，然后播下一首。
+     * [removeAt] 删除当前项时本身就会加载下一首；列表被删空则自动停止。
+     */
+    private fun onVideoGone() {
+        val goneBvid = currentBvid
+        val goneIndex = currentIndex
+        if (goneIndex !in playlist.indices) return
+        log("视频不见了，已从播放列表移除：$goneBvid")
+        onTrackUnavailable?.invoke(goneBvid)
+        stopPolling()
+        removeAt(goneIndex)
+    }
+
+
 
     /**
      * 等视频真正播放、播放器就绪后，点击"网页全屏"按钮一次。
@@ -350,6 +386,12 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
             }
             mainHandler.postDelayed(self, POLL_MS)
         } else {
+            // 播放途中视频被下架：页面会换成「视频不见了」，直接删掉换下一首，
+            // 不要走"状态丢失→重载"那条路（重载多少次都还是这个错误页）
+            if (obj != null && obj.optBoolean("gone", false)) {
+                onVideoGone()
+                return
+            }
             if (++lostCount >= MAX_LOST) {
                 // 视频状态丢失：自动重载网页恢复播放，尽量续播到上次位置
                 if (++recoveryCount > MAX_RECOVERY) {
@@ -499,6 +541,24 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         private const val POLL_MS = 500L
         private const val MAX_LOST = 20
         private const val MAX_RECOVERY = 3
+        private const val VIDEO_WAIT_MS = 40_000L
+
+        /**
+         * 探测播放页状态：
+         *   "ok"   — 已经有 <video>，可以开始播放
+         *   "gone" — 出现「视频不见了」错误页，视频确实失效
+         *   "wait" — 都还没有，继续等
+         * 只认 .error-text 里的文案，避免把普通加载中误判成失效。
+         */
+        private val VIDEO_PROBE_JS = """
+            (function(){
+              if (document.querySelector('video')) return 'ok';
+              var t = document.querySelector('.error-text');
+              var s = (t && (t.innerText || t.textContent)) || '';
+              if (/视频不见了|视频不存在|视频已失效/.test(s)) return 'gone';
+              return 'wait';
+            })()
+        """.trimIndent()
 
         private val STEALTH_JS = """
             (() => {
@@ -621,7 +681,12 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         private val GET_STATE_JS = """
             (function(){
               var v = document.querySelector('video');
-              if (!v) return JSON.stringify({ok:false});
+              if (!v) {
+                var t = document.querySelector('.error-text');
+                var s = (t && (t.innerText || t.textContent)) || '';
+                var gone = /视频不见了|视频不存在|视频已失效/.test(s);
+                return JSON.stringify({ok:false, gone:gone});
+              }
               return JSON.stringify({
                 ok: true,
                 paused: v.paused,

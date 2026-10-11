@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.text.method.LinkMovementMethod
 import android.widget.TextView
+import android.widget.Toast
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.os.Bundle
@@ -41,9 +42,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
@@ -132,15 +135,23 @@ private enum class AppTab(val label: String, val icon: ImageVector) {
     ABOUT("关于", Icons.Filled.Info),
 }
 
+/** 应用最外层页面：列表库 → 导入表单 → 播放器。 */
+private enum class AppScreen { LIBRARY, IMPORT, PLAYER }
+
 @Composable
 fun BiliPlayerApp() {
     val context = LocalContext.current
     val uiState by PlayerController.state.collectAsState()
     val webView by PlayerController.webView.collectAsState()
-    var inMain by remember { mutableStateOf(false) }
+    val library by PlaylistStore.playlists.collectAsState()
+    var screen by remember { mutableStateOf(AppScreen.LIBRARY) }
     var showWebView by remember { mutableStateOf(Preferences.autoFullscreen(context)) }
     var currentTab by remember { mutableStateOf(AppTab.PLAYER) }
     var showLogin by remember { mutableStateOf(false) }
+    // 列表库的弹窗状态
+    var renameTarget by remember { mutableStateOf<Playlist?>(null) }
+    var deleteTarget by remember { mutableStateOf<Playlist?>(null) }
+    val inMain = screen == AppScreen.PLAYER
 
     // 更新 / 公告状态
     val scope = rememberCoroutineScope()
@@ -164,6 +175,13 @@ fun BiliPlayerApp() {
         }
     }
 
+    // 一次性提示（视频失效剔除等）
+    LaunchedEffect(Unit) {
+        PlayerController.toast.collect { msg ->
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // 冷启动检查一次更新与公告（放在这里而非 onResume，避免每次切前台都请求）
     LaunchedEffect(Unit) {
         // 404 / 超时 / 网络异常都已在 AppPublisher 内部静默，拿到 null 即跳过
@@ -177,12 +195,14 @@ fun BiliPlayerApp() {
         }
     }
 
-    // 抓取成功后进入主界面；"返回设置"后需重新抓取才再次进入
-    LaunchedEffect(uiState.isFetching) {
-        if (!uiState.isFetching && uiState.playlist.isNotEmpty()) inMain = true
+    // 有列表开始播放（导入完成或点了库里的某一项）就进播放器
+    LaunchedEffect(uiState.currentPlaylistId) {
+        if (uiState.currentPlaylistId.isNotEmpty() && uiState.playlist.isNotEmpty()) {
+            screen = AppScreen.PLAYER
+        }
     }
 
-    // 进入主界面时按"自动全屏"偏好决定默认显示 WebView 还是封面
+    // 进入播放器时按"自动全屏"偏好决定默认显示 WebView 还是封面
     LaunchedEffect(inMain) {
         if (inMain) showWebView = Preferences.autoFullscreen(context)
     }
@@ -195,10 +215,11 @@ fun BiliPlayerApp() {
         }
     }
 
-    // 设置页仅在抓取期间显示 WebView（保证收藏夹页面能渲染出侧栏/卡片）；平时隐藏避免挤压表单
+    // 抓取/同步期间必须露出 WebView（B 站要渲染才能出侧栏和卡片）；
+    // 播放器页则由"显示画面"开关决定
     val showWebPanel = when {
-        !inMain -> uiState.isFetching
-        currentTab == AppTab.PLAYER -> showWebView
+        uiState.isFetching -> true
+        inMain && currentTab == AppTab.PLAYER -> showWebView
         else -> false
     }
 
@@ -225,10 +246,27 @@ fun BiliPlayerApp() {
                     Column(Modifier.fillMaxSize()) {
                         Spacer(Modifier.height(if (showWebPanel) 240.dp else 0.dp))
                         Box(Modifier.weight(1f)) {
-                            SetupScreen(
-                                uiState = uiState,
-                                onLoginClick = { showLogin = true }
-                            )
+                            when (screen) {
+                                AppScreen.IMPORT -> SetupScreen(
+                                    uiState = uiState,
+                                    onLoginClick = { showLogin = true },
+                                    onBack = { screen = AppScreen.LIBRARY },
+                                )
+                                else -> LibraryScreen(
+                                    playlists = library,
+                                    uiState = uiState,
+                                    currentPlaylistId = uiState.currentPlaylistId,
+                                    onImportClick = { screen = AppScreen.IMPORT },
+                                    onPlay = {
+                                        // 走播放器前先起前台服务，否则后台/锁屏会被系统掐掉
+                                        PlayerService.start(context)
+                                        PlayerController.playPlaylist(it)
+                                    },
+                                    onSync = { PlayerController.syncPlaylist(it.id) },
+                                    onRename = { renameTarget = it },
+                                    onDelete = { deleteTarget = it },
+                                )
+                            }
                         }
                     }
                 }
@@ -242,10 +280,10 @@ fun BiliPlayerApp() {
                                 showWebView = showWebView,
                                 onToggleWebView = { showWebView = !showWebView },
                                 onBack = {
-                                    // 返回设置：停止播放、清空状态、停掉前台服务
+                                    // 返回列表库：停止播放、清空状态、停掉前台服务
                                     PlayerController.stop()
                                     PlayerService.stop(context)
-                                    inMain = false
+                                    screen = AppScreen.LIBRARY
                                 }
                             )
                         }
@@ -369,6 +407,67 @@ fun BiliPlayerApp() {
             confirmButton = { TextButton(onClick = { downloadMessage = null }) { Text("知道了") } }
         )
     }
+
+    // ---------- 播放列表库：重命名 / 删除 ----------
+    renameTarget?.let { pl ->
+        RenameDialog(
+            initial = pl.name,
+            onConfirm = { newName ->
+                PlaylistStore.rename(context, pl.id, newName)
+                renameTarget = null
+            },
+            onDismiss = { renameTarget = null }
+        )
+    }
+
+    deleteTarget?.let { pl ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("删除播放列表") },
+            text = { Text("确定删除「${pl.name}」吗？本地缓存的 ${pl.tracks.size} 首曲目会一并移除，收藏夹本身不受影响。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    PlaylistStore.delete(context, pl.id)
+                    // 正在播的列表被删掉就停下来，避免继续播一份已经不存在的缓存
+                    if (uiState.currentPlaylistId == pl.id) {
+                        PlayerController.stop()
+                        PlayerService.stop(context)
+                    }
+                    deleteTarget = null
+                }) { Text("删除") }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } }
+        )
+    }
+}
+
+@Composable
+private fun RenameDialog(
+    initial: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember(initial) { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("重命名播放列表") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                label = { Text("名称") },
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(text) },
+                enabled = text.isNotBlank()
+            ) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
 }
 
 @Composable
@@ -512,8 +611,168 @@ private fun formatDate(ms: Long): String {
     }
 }
 
+/**
+ * 抓取/同步进行中的进度条——导入页和列表库共用。
+ * 总数还没拿到时用不确定进度条，不假装有百分比。
+ */
 @Composable
-private fun SetupScreen(uiState: PlayerUiState, onLoginClick: () -> Unit) {
+private fun FetchProgress(uiState: PlayerUiState) {
+    if (!uiState.isFetching) return
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("正在抓取收藏夹… 请不要动上方画面", style = MaterialTheme.typography.titleMedium)
+        if (uiState.fetchProgress > 0f) {
+            LinearProgressIndicator(
+                progress = { uiState.fetchProgress },
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+        uiState.paginationInfo?.let { info ->
+            Text(info, style = MaterialTheme.typography.bodyMedium)
+        }
+        uiState.fetchHint?.let { hint ->
+            Text(
+                hint,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(8.dp))
+                    .padding(12.dp),
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
+    }
+}
+
+/**
+ * 播放列表库：应用进入的首页。
+ * 点一项直接播缓存；齿轮里可以同步 / 重命名 / 删除。
+ */
+@Composable
+private fun LibraryScreen(
+    playlists: List<Playlist>,
+    uiState: PlayerUiState,
+    currentPlaylistId: String,
+    onImportClick: () -> Unit,
+    onPlay: (Playlist) -> Unit,
+    onSync: (Playlist) -> Unit,
+    onRename: (Playlist) -> Unit,
+    onDelete: (Playlist) -> Unit,
+) {
+    var menuFor by remember { mutableStateOf<String?>(null) }
+
+    Column(Modifier.fillMaxSize().padding(20.dp)) {
+        Text("播放列表", style = MaterialTheme.typography.headlineMedium)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "从收藏夹导入一次就会缓存到本地，之后打开即用，不必重新抓取",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(14.dp))
+
+        FetchProgress(uiState)
+
+        uiState.fetchError?.let {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                it,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(8.dp))
+                    .padding(12.dp),
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
+
+        Spacer(Modifier.height(14.dp))
+        Button(onClick = onImportClick, modifier = Modifier.fillMaxWidth()) {
+            Text("+ 从收藏夹导入")
+        }
+        Spacer(Modifier.height(12.dp))
+
+        if (playlists.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "还没有播放列表，点上面的按钮从 B 站收藏夹导入一个吧",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+            return@Column
+        }
+
+        LazyColumn(Modifier.fillMaxSize()) {
+            itemsIndexed(playlists, key = { _, p -> p.id }) { _, pl ->
+                val playing = pl.id == currentPlaylistId
+                val syncing = pl.id == uiState.syncingPlaylistId
+                Card(
+                    onClick = { onPlay(pl) },
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                pl.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (playing) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            val meta = buildString {
+                                append("${pl.tracks.size} 首")
+                                if (pl.updatedAt > 0) append(" · 更新于 ${formatDate(pl.updatedAt)}")
+                                if (pl.favName.isNotBlank()) append(" · 收藏夹「${pl.favName}」")
+                            }
+                            Text(
+                                meta,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (syncing) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Box {
+                            FilledIconButton(onClick = { menuFor = pl.id }) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = "更多")
+                            }
+                            DropdownMenu(
+                                expanded = menuFor == pl.id,
+                                onDismissRequest = { menuFor = null }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("同步") },
+                                    onClick = { menuFor = null; onSync(pl) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("重命名") },
+                                    onClick = { menuFor = null; onRename(pl) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("删除") },
+                                    onClick = { menuFor = null; onDelete(pl) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SetupScreen(
+    uiState: PlayerUiState,
+    onLoginClick: () -> Unit,
+    onBack: () -> Unit,
+) {
     // 抓取中：显示加载提示（WebView 面板在顶部由外层布局展示）
     if (uiState.isFetching) {
         Column(
@@ -521,28 +780,7 @@ private fun SetupScreen(uiState: PlayerUiState, onLoginClick: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text("BiliPlayer", style = MaterialTheme.typography.headlineMedium)
-            Text("正在抓取收藏夹… 请不要动上方画面", style = MaterialTheme.typography.titleLarge)
-            if (uiState.fetchProgress > 0f) {
-                LinearProgressIndicator(
-                    progress = { uiState.fetchProgress },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            } else {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-            }
-            uiState.paginationInfo?.let { info ->
-                Text(info, style = MaterialTheme.typography.bodyMedium)
-            }
-            uiState.fetchHint?.let { hint ->
-                Text(
-                    hint,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.errorContainer, RoundedCornerShape(8.dp))
-                        .padding(12.dp),
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
-            }
+            FetchProgress(uiState)
         }
         return
     }
@@ -556,9 +794,16 @@ private fun SetupScreen(uiState: PlayerUiState, onLoginClick: () -> Unit) {
         modifier = Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("BiliPlayer", style = MaterialTheme.typography.headlineMedium)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("从收藏夹导入", style = MaterialTheme.typography.headlineMedium)
+            TextButton(onClick = onBack) { Text("← 返回") }
+        }
         Text(
-            "输入 B 站 UID 与收藏夹名称，无头浏览器将自动抓取并后台播放",
+            "输入 B 站 UID 与收藏夹名称，无头浏览器将自动抓取并缓存到本地，随后开始播放",
             style = MaterialTheme.typography.bodyMedium
         )
         OutlinedTextField(
@@ -599,12 +844,12 @@ private fun SetupScreen(uiState: PlayerUiState, onLoginClick: () -> Unit) {
                 Preferences.saveIdentity(context, uid.trim(), favName.trim())
                 Preferences.saveAutoFullscreen(context, autoFullscreen)
                 PlayerService.start(context)
-                PlayerController.fetchAndStart(uid.trim(), favName.trim())
+                PlayerController.importAndStart(uid.trim(), favName.trim())
             },
             enabled = uid.isNotBlank() && favName.isNotBlank(),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("开始播放")
+            Text("抓取并播放")
         }
         uiState.fetchError?.let {
             Text("错误: $it", color = MaterialTheme.colorScheme.error)
@@ -678,7 +923,15 @@ private fun PlayerScreen(uiState: PlayerUiState, showWebView: Boolean, onToggleW
                 TextButton(onClick = onToggleWebView) {
                     Text(if (showWebView) "隐藏页面" else "显示页面")
                 }
-                TextButton(onClick = onBack) { Text("返回设置") }
+                TextButton(onClick = onBack) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("返回列表")
+                }
             }
         }
 

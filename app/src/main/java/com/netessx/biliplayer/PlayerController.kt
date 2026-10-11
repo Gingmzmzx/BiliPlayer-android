@@ -7,7 +7,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -36,6 +38,10 @@ data class PlayerUiState(
     val logLines: List<String> = emptyList(),
     val sleepRemaining: Long? = null,
     val sleepAction: SleepAction = SleepAction.PAUSE,
+    /** 正在播放的列表 id（来自 [PlaylistStore]）；空串表示不是从列表库播的。 */
+    val currentPlaylistId: String = "",
+    /** 正在同步哪个列表，空串表示没有同步在进行。 */
+    val syncingPlaylistId: String = "",
 )
 
 /**
@@ -57,9 +63,17 @@ object PlayerController {
     private val _webView = MutableStateFlow<WebView?>(null)
     val webView: StateFlow<WebView?> = _webView
 
+    /** 一次性提示（Toast）。用 SharedFlow 而不是状态字段，避免重组时重复弹。 */
+    private val _toast = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val toast: SharedFlow<String> = _toast
+
+    /** 当前播放的列表 id；空串表示不在列表库里。 */
+    private var currentPlaylistId: String = ""
+
     fun init(context: Context) {
         if (::appContext.isInitialized) return
         appContext = context.applicationContext
+        PlaylistStore.init(appContext)
         _state.update {
             it.copy(
                 volume = Preferences.defaultVolume(appContext),
@@ -102,14 +116,21 @@ object PlayerController {
         _state.update { it.copy(sleepRemaining = null) }
     }
 
-    /** 抓取收藏夹并开始播放（复刻 run.py：get_favlist -> BiliMusicPlayer.play）。 */
-    fun fetchAndStart(uid: String, favName: String) {
+    /**
+     * 从收藏夹导入一个列表：抓取 → 缓存到 [PlaylistStore] → 立即开始播放。
+     * 复刻 run.py 的 get_favlist -> BiliMusicPlayer.play，只是多了一步落库。
+     */
+    fun importAndStart(uid: String, favName: String) {
         if (!::appContext.isInitialized) return
         player?.stop()
         player = null
         val b = ensureBrowser()
         _state.update {
-            it.copy(isFetching = true, fetchError = null, fetchHint = null, paginationInfo = null, fetchProgress = 0f, logLines = emptyList(), playlist = emptyList())
+            it.copy(
+                isFetching = true, fetchError = null, fetchHint = null, paginationInfo = null,
+                fetchProgress = 0f, logLines = emptyList(), playlist = emptyList(),
+                currentPlaylistId = "", syncingPlaylistId = "",
+            )
         }
         val user = BiliUser(
             b,
@@ -122,12 +143,19 @@ object PlayerController {
             uid = uid,
             favName = favName,
             onResult = { tracks ->
-                _state.update { it.copy(isFetching = false, fetchHint = null, playlist = tracks) }
-                if (tracks.isNotEmpty()) {
-                    startPlayer(tracks)
-                } else {
+                _state.update { it.copy(isFetching = false, fetchHint = null) }
+                if (tracks.isEmpty()) {
                     _state.update { it.copy(fetchError = "收藏夹为空或不可见") }
+                    return@getFavlist
                 }
+                val pl = PlaylistStore.add(
+                    context = appContext,
+                    name = Playlist.defaultName(favName, uid),
+                    uid = uid,
+                    favName = favName,
+                    tracks = tracks,
+                )
+                playPlaylist(pl)
             },
             onError = { e ->
                 _state.update { it.copy(isFetching = false, fetchHint = null, fetchError = e) }
@@ -135,10 +163,70 @@ object PlayerController {
         )
     }
 
-    /** 停止播放并清空播放状态（返回设置时调用）。 */
+    /** 播放一个已缓存的列表——不抓取，直接用本地曲目起播。 */
+    fun playPlaylist(pl: Playlist) {
+        if (!::appContext.isInitialized) return
+        if (pl.tracks.isEmpty()) {
+            _state.update { it.copy(fetchError = "这个列表还没有内容") }
+            return
+        }
+        currentPlaylistId = pl.id
+        _state.update {
+            it.copy(
+                playlist = pl.tracks, fetchError = null, currentPlaylistId = pl.id,
+                logLines = emptyList(), paginationInfo = null, fetchProgress = 0f,
+            )
+        }
+        startPlayer(pl.tracks)
+    }
+
+    /** 同步：重新抓取该列表对应的收藏夹并覆盖缓存曲目。 */
+    fun syncPlaylist(id: String) {
+        if (!::appContext.isInitialized) return
+        val pl = PlaylistStore.get(id) ?: return
+        if (pl.uid.isBlank() || pl.favName.isBlank()) {
+            _state.update { it.copy(fetchError = "这个列表没有记录来源收藏夹，无法同步") }
+            return
+        }
+        val b = ensureBrowser()
+        _state.update {
+            it.copy(
+                isFetching = true, fetchError = null, fetchHint = null, paginationInfo = null,
+                fetchProgress = 0f, syncingPlaylistId = id,
+            )
+        }
+        val user = BiliUser(
+            b,
+            onLog = { msg -> appendLog(msg) },
+            onHint = { h -> _state.update { it.copy(fetchHint = h) } },
+            onProgress = { info -> _state.update { it.copy(paginationInfo = info) } },
+            onFetchProgress = { p -> _state.update { it.copy(fetchProgress = p) } },
+        )
+        user.getFavlist(
+            uid = pl.uid,
+            favName = pl.favName,
+            onResult = { tracks ->
+                _state.update { it.copy(isFetching = false, fetchHint = null, syncingPlaylistId = "") }
+                if (tracks.isEmpty()) {
+                    _state.update { it.copy(fetchError = "同步失败：收藏夹为空或不可见") }
+                    return@getFavlist
+                }
+                val updated = PlaylistStore.replaceTracks(appContext, id, tracks)
+                appendLog("已同步「${pl.name}」：${tracks.size} 个视频")
+                // 正在播放这个列表 → 用新曲目重起，否则只更新库
+                if (updated != null && currentPlaylistId == id) playPlaylist(updated)
+            },
+            onError = { e ->
+                _state.update { it.copy(isFetching = false, fetchHint = null, syncingPlaylistId = "", fetchError = e) }
+            },
+        )
+    }
+
+    /** 停止播放并清空播放状态（返回列表库时调用）。 */
     fun stop() {
         player?.stop()
         player = null
+        currentPlaylistId = ""
         _state.update {
             it.copy(
                 playlist = emptyList(),
@@ -150,6 +238,10 @@ object PlayerController {
                 isPlaying = false,
                 currentTime = 0.0,
                 duration = 0.0,
+                currentPlaylistId = "",
+                syncingPlaylistId = "",
+                paginationInfo = null,
+                fetchProgress = 0f,
             )
         }
     }
@@ -227,9 +319,26 @@ object PlayerController {
             autoFullscreen = { Preferences.autoFullscreen(appContext) }
             onLog = { msg -> appendLog(msg) }
             onStateUpdate = { syncState() }
+            // 视频失效被播放器剔除后，同步清理本地缓存与它的单曲偏好
+            onTrackUnavailable = { bvid -> forgetTrack(bvid) }
         }
         player = p
         p.start()
+    }
+
+    /**
+     * 视频失效：把它从本地缓存的播放列表里永久删掉，并清掉单曲偏好。
+     * 内存里的播放列表由 BiliMusicPlayer 自己维护，这里只负责落盘那一份。
+     */
+    private fun forgetTrack(bvid: String) {
+        if (bvid.isBlank()) return
+        Preferences.clearPreference(appContext, bvid)
+        // 不管这个列表是不是从库里来的，用户都该知道有首歌被跳过了
+        _toast.tryEmit("视频失效，已从播放列表移除：$bvid")
+        val id = currentPlaylistId
+        if (id.isEmpty()) return
+        val removed = PlaylistStore.removeTracks(appContext, id, listOf(bvid))
+        if (removed.isNotEmpty()) appendLog("已从本地缓存移除失效视频：$bvid")
     }
 
     private fun syncState() {

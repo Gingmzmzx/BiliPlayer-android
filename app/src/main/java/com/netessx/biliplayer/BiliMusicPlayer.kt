@@ -27,6 +27,13 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
     /** 是否自动全屏（由 PlayerController 注入，读取 Preferences.autoFullscreen；null 视为开启）。 */
     var autoFullscreen: (() -> Boolean)? = null
 
+    /**
+     * 画面面板当前是否真的显示着（由 PlayerController 注入，跟随 Compose 布局）。
+     * 切到播放列表/统计/关于时面板会折叠成 0 高度，此时不该尝试全屏，
+     * 否则每切一首都会刷一条「WebView 不可见」的日志。
+     */
+    var isWebPanelVisible: (() -> Boolean)? = null
+
     var onStateUpdate: (() -> Unit)? = null
     var onLog: ((String) -> Unit)? = null
 
@@ -247,6 +254,9 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
      * 避免第二次点击把全屏退掉。
      */
     private fun startWebFullscreen() {
+        // 面板被主动收起（切到别的 tab / 隐藏画面）：静默跳过，用户没在看画面，
+        // 不必每切一首就刷一条日志
+        if (isWebPanelVisible?.invoke() == false) return
         // WebView 不可见（高度<=0）时全屏按钮坐标会落在折叠页面的错误位置（如首页按钮），直接跳过
         if ((browser.view()?.height ?: 0) <= 0) {
             log("WebView 不可见，跳过自动全屏")

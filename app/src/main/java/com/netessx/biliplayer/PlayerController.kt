@@ -59,6 +59,7 @@ object PlayerController {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var sleepJob: Job? = null
+    private var statsJob: Job? = null
 
     private val _webView = MutableStateFlow<WebView?>(null)
     val webView: StateFlow<WebView?> = _webView
@@ -70,10 +71,15 @@ object PlayerController {
     /** 当前播放的列表 id；空串表示不在列表库里。 */
     private var currentPlaylistId: String = ""
 
+    /** 画面面板是否显示（由 MainActivity 跟随 Compose 布局更新）。 */
+    private var webPanelVisible: Boolean = false
+
     fun init(context: Context) {
         if (::appContext.isInitialized) return
         appContext = context.applicationContext
         PlaylistStore.init(appContext)
+        PlaybackStats.init(appContext)
+        startStatsTicker()
         _state.update {
             it.copy(
                 volume = Preferences.defaultVolume(appContext),
@@ -212,6 +218,8 @@ object PlayerController {
                     return@getFavlist
                 }
                 val updated = PlaylistStore.replaceTracks(appContext, id, tracks)
+                // 同步后曲目可能变了，裁掉已不在列表里的统计
+                PlaybackStats.retainTracks(appContext, id, tracks.map { it.bvid })
                 appendLog("已同步「${pl.name}」：${tracks.size} 个视频")
                 // 正在播放这个列表 → 用新曲目重起，否则只更新库
                 if (updated != null && currentPlaylistId == id) playPlaylist(updated)
@@ -278,10 +286,13 @@ object PlayerController {
         }
     }
 
-    /** 删除播放列表中指定项（同时清理其已保存的偏好）。 */
+    /** 删除播放列表中指定项（同时清理其已保存的偏好与统计）。 */
     fun removeTrack(index: Int) {
         val track = player?.playlist?.getOrNull(index) ?: return
         Preferences.clearPreference(appContext, track.bvid)
+        if (currentPlaylistId.isNotEmpty()) {
+            PlaybackStats.removeTrack(appContext, currentPlaylistId, track.bvid)
+        }
         player?.removeAt(index)
     }
 
@@ -289,6 +300,11 @@ object PlayerController {
 
     /** 手动触发网页全屏（用户"显示 WebView"时调用）。 */
     fun enterFullscreen() = player?.enterWebFullscreen()
+
+    /** 跟随 Compose 布局更新面板可见性；播放器据此决定是否尝试网页全屏。 */
+    fun setWebPanelVisible(visible: Boolean) {
+        webPanelVisible = visible
+    }
 
     fun release() {
         player = null
@@ -321,6 +337,8 @@ object PlayerController {
             onStateUpdate = { syncState() }
             // 视频失效被播放器剔除后，同步清理本地缓存与它的单曲偏好
             onTrackUnavailable = { bvid -> forgetTrack(bvid) }
+            // 面板收起时不要尝试全屏（坐标会落在折叠页面上）
+            isWebPanelVisible = { webPanelVisible }
         }
         player = p
         p.start()
@@ -337,8 +355,25 @@ object PlayerController {
         _toast.tryEmit("视频失效，已从播放列表移除：$bvid")
         val id = currentPlaylistId
         if (id.isEmpty()) return
+        PlaybackStats.removeTrack(appContext, id, bvid)
         val removed = PlaylistStore.removeTracks(appContext, id, listOf(bvid))
         if (removed.isNotEmpty()) appendLog("已从本地缓存移除失效视频：$bvid")
+    }
+
+    /** 播放中每秒累加一次听歌时长；只统计来自播放列表库的播放。 */
+    private fun startStatsTicker() {
+        if (statsJob?.isActive == true) return
+        statsJob = scope.launch {
+            while (true) {
+                delay(1000)
+                val s = _state.value
+                if (s.isPlaying && !s.isFetching &&
+                    currentPlaylistId.isNotEmpty() && s.currentBvid.isNotEmpty()
+                ) {
+                    PlaybackStats.addSeconds(appContext, currentPlaylistId, s.currentBvid)
+                }
+            }
+        }
     }
 
     private fun syncState() {

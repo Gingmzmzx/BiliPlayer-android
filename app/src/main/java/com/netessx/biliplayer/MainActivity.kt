@@ -20,10 +20,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +45,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
@@ -86,6 +89,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
@@ -131,7 +135,7 @@ class MainActivity : ComponentActivity() {
 private enum class AppTab(val label: String, val icon: ImageVector) {
     PLAYER("播放器", Icons.Filled.PlayArrow),
     PLAYLIST("播放列表", Icons.Filled.List),
-    LOG("日志", Icons.Filled.Edit),
+    STATS("统计", Icons.Filled.BarChart),
     ABOUT("关于", Icons.Filled.Info),
 }
 
@@ -144,10 +148,15 @@ fun BiliPlayerApp() {
     val uiState by PlayerController.state.collectAsState()
     val webView by PlayerController.webView.collectAsState()
     val library by PlaylistStore.playlists.collectAsState()
+    val stats by PlaybackStats.stats.collectAsState()
     var screen by remember { mutableStateOf(AppScreen.LIBRARY) }
     var showWebView by remember { mutableStateOf(Preferences.autoFullscreen(context)) }
     var currentTab by remember { mutableStateOf(AppTab.PLAYER) }
     var showLogin by remember { mutableStateOf(false) }
+    var showLogs by remember { mutableStateOf(false) }
+    // 统计页选中的列表。放在这里而不是 StatsScreen 内部：切 tab 时页面会被销毁，
+    // 内部 remember 会丢；提到这里才能记住上次的选择。
+    var statsSelectedId by remember { mutableStateOf<String?>(null) }
     // 列表库的弹窗状态
     var renameTarget by remember { mutableStateOf<Playlist?>(null) }
     var deleteTarget by remember { mutableStateOf<Playlist?>(null) }
@@ -207,20 +216,23 @@ fun BiliPlayerApp() {
         if (inMain) showWebView = Preferences.autoFullscreen(context)
     }
 
-    // 手动"显示 WebView"后，等 WebView 完成布局（高度>0）再补全屏，避免高度仍为 0 导致坐标误点
-    LaunchedEffect(showWebView) {
-        if (showWebView) {
-            delay(500)
-            PlayerController.enterFullscreen()
-        }
-    }
-
     // 抓取/同步期间必须露出 WebView（B 站要渲染才能出侧栏和卡片）；
     // 播放器页则由"显示画面"开关决定
     val showWebPanel = when {
         uiState.isFetching -> true
         inMain && currentTab == AppTab.PLAYER -> showWebView
         else -> false
+    }
+
+    // 面板每次重新露出（点了「显示页面」或切回播放器 tab）时补一次全屏：
+    // 等 WebView 完成布局（高度>0）再点，避免坐标落在折叠页面上。
+    // 用 showWebPanel 而不是 showWebView —— 切 tab 时面板也会收起再展开，值却不变。
+    LaunchedEffect(showWebPanel) {
+        PlayerController.setWebPanelVisible(showWebPanel)
+        if (showWebPanel && inMain) {
+            delay(500)
+            PlayerController.enterFullscreen()
+        }
     }
 
     Scaffold(
@@ -230,7 +242,12 @@ fun BiliPlayerApp() {
                     AppTab.entries.forEach { tab ->
                         NavigationBarItem(
                             selected = currentTab == tab,
-                            onClick = { currentTab = tab },
+                            onClick = {
+                                currentTab = tab
+                                // 日志是从「关于」弹出的全屏页，切 tab 时关掉，
+                                // 否则它会一直盖在新页面上
+                                showLogs = false
+                            },
                             icon = { Icon(tab.icon, contentDescription = tab.label) },
                             label = { Text(tab.label) }
                         )
@@ -242,6 +259,7 @@ fun BiliPlayerApp() {
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when {
                 showLogin -> LoginScreen(onBack = { showLogin = false })
+                showLogs -> LogScreenPage(uiState = uiState, onBack = { showLogs = false })
                 !inMain -> {
                     Column(Modifier.fillMaxSize()) {
                         Spacer(Modifier.height(if (showWebPanel) 240.dp else 0.dp))
@@ -256,6 +274,7 @@ fun BiliPlayerApp() {
                                     playlists = library,
                                     uiState = uiState,
                                     currentPlaylistId = uiState.currentPlaylistId,
+                                    stats = stats,
                                     onImportClick = { screen = AppScreen.IMPORT },
                                     onPlay = {
                                         // 走播放器前先起前台服务，否则后台/锁屏会被系统掐掉
@@ -288,14 +307,25 @@ fun BiliPlayerApp() {
                             )
                         }
                     }
-                    AppTab.PLAYLIST -> PlaylistScreen(uiState = uiState, onPlay = { index ->
-                        PlayerController.playIndex(index)
-                        currentTab = AppTab.PLAYER
-                    })
-                    AppTab.LOG -> LogScreen(uiState)
+                    AppTab.PLAYLIST -> PlaylistScreen(
+                        uiState = uiState,
+                        playlistId = uiState.currentPlaylistId,
+                        stats = stats,
+                        onPlay = { index ->
+                            PlayerController.playIndex(index)
+                            currentTab = AppTab.PLAYER
+                        }
+                    )
+                    AppTab.STATS -> StatsScreen(
+                        playlists = library,
+                        stats = stats,
+                        selectedId = statsSelectedId,
+                        onSelect = { statsSelectedId = it }
+                    )
                     AppTab.ABOUT -> AboutScreen(
                         checking = checkingUpdate,
                         checkResult = checkResult,
+                        onOpenLogs = { showLogs = true },
                         onCheckUpdate = {
                             if (!checkingUpdate) {
                                 checkingUpdate = true
@@ -428,6 +458,7 @@ fun BiliPlayerApp() {
             confirmButton = {
                 TextButton(onClick = {
                     PlaylistStore.delete(context, pl.id)
+                    PlaybackStats.removePlaylist(context, pl.id)
                     // 正在播的列表被删掉就停下来，避免继续播一份已经不存在的缓存
                     if (uiState.currentPlaylistId == pl.id) {
                         PlayerController.stop()
@@ -653,6 +684,7 @@ private fun LibraryScreen(
     playlists: List<Playlist>,
     uiState: PlayerUiState,
     currentPlaylistId: String,
+    stats: Map<String, Map<String, Long>>,
     onImportClick: () -> Unit,
     onPlay: (Playlist) -> Unit,
     onSync: (Playlist) -> Unit,
@@ -732,6 +764,16 @@ private fun LibraryScreen(
                                 meta,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            // 该列表累计听歌时长
+                            val listened = stats[pl.id]?.values?.sum() ?: 0L
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                if (listened > 0) "已听 ${formatListenTime(listened)}"
+                                else "还没听过",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (listened > 0) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         if (syncing) {
@@ -1105,10 +1147,26 @@ private fun CustomTimerDialog(onDismiss: () -> Unit, onConfirm: (Long) -> Unit) 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PlaylistScreen(uiState: PlayerUiState, onPlay: (Int) -> Unit) {
+private fun PlaylistScreen(
+    uiState: PlayerUiState,
+    playlistId: String,
+    stats: Map<String, Map<String, Long>>,
+    onPlay: (Int) -> Unit,
+) {
     var prefIndex by remember { mutableStateOf<Int?>(null) }
+    var showStats by remember { mutableStateOf(false) }
+    val perTrack = stats[playlistId].orEmpty()
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("播放列表 (${uiState.playlist.size})·长按设置", style = MaterialTheme.typography.titleLarge)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("播放列表 (${uiState.playlist.size})·长按设置", style = MaterialTheme.typography.titleLarge)
+            TextButton(onClick = { showStats = true }, enabled = uiState.playlist.isNotEmpty()) {
+                Text("听歌统计")
+            }
+        }
         Spacer(Modifier.height(8.dp))
         if (uiState.playlist.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1117,6 +1175,7 @@ private fun PlaylistScreen(uiState: PlayerUiState, onPlay: (Int) -> Unit) {
         } else {
             LazyColumn(Modifier.fillMaxSize()) {
                 itemsIndexed(uiState.playlist) { index, track ->
+                    val listened = perTrack[track.bvid] ?: 0L
                     ListItem(
                         headlineContent = {
                             Text(
@@ -1125,7 +1184,14 @@ private fun PlaylistScreen(uiState: PlayerUiState, onPlay: (Int) -> Unit) {
                                 overflow = TextOverflow.Ellipsis
                             )
                         },
-                        supportingContent = { Text(track.bvid) },
+                        supportingContent = {
+                            Text(
+                                buildString {
+                                    append(track.bvid)
+                                    if (listened > 0) append(" · 已听 ${formatListenTime(listened)}")
+                                }
+                            )
+                        },
                         leadingContent = {
                             if (track.cover.isNotBlank()) {
                                 RemoteImage(track.cover, Modifier.size(44.dp))
@@ -1148,6 +1214,13 @@ private fun PlaylistScreen(uiState: PlayerUiState, onPlay: (Int) -> Unit) {
             }
         }
     }
+    if (showStats) {
+        StatsDialog(
+            tracks = uiState.playlist,
+            perTrack = perTrack,
+            onDismiss = { showStats = false }
+        )
+    }
     prefIndex?.let { index ->
         TrackPrefDialog(
             uiState = uiState,
@@ -1155,6 +1228,210 @@ private fun PlaylistScreen(uiState: PlayerUiState, onPlay: (Int) -> Unit) {
             onDismiss = { prefIndex = null },
             onChanged = { prefIndex = null }
         )
+    }
+}
+
+/** 秒 → 「1 小时 23 分」/「5 分 12 秒」/「42 秒」。 */
+private fun formatListenTime(seconds: Long): String {
+    if (seconds <= 0) return "0 秒"
+    val h = seconds / 3600
+    val m = (seconds % 3600) / 60
+    val s = seconds % 60
+    return when {
+        h > 0 -> "$h 小时 $m 分"
+        m > 0 -> "$m 分 $s 秒"
+        else -> "$s 秒"
+    }
+}
+
+/** 饼图配色：B 站粉/蓝打头，其余为区分度较高的辅助色。 */
+private val STATS_COLORS = listOf(
+    Color(0xFFFB7299), Color(0xFF23ADE5), Color(0xFF4DD6A8), Color(0xFF7B5CFF),
+    Color(0xFFFFA726), Color(0xFF26C6DA), Color(0xFFEC407A), Color(0xFF9CCC65),
+)
+
+/**
+ * 听歌统计弹窗：总时长 + 饼图 + 图例。
+ * 显示时长最多的前 7 首，其余合并成「其他」，避免图例过长。
+ */
+@Composable
+private fun StatsDialog(
+    tracks: List<BiliTrack>,
+    perTrack: Map<String, Long>,
+    onDismiss: () -> Unit,
+) {
+    val total = perTrack.values.sum()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("听歌统计") },
+        text = {
+            if (total <= 0) {
+                Text("还没有听歌记录。播放几首之后这里就会有数据。")
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                ) {
+                    StatsContent(tracks = tracks, perTrack = perTrack)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+    )
+}
+
+/**
+ * 听歌统计页（底部导航「统计」）。
+ * 顶部是跨列表总时长，下面可以切换列表看各自的饼图。
+ */
+@Composable
+private fun StatsScreen(
+    playlists: List<Playlist>,
+    stats: Map<String, Map<String, Long>>,
+    selectedId: String?,
+    onSelect: (String) -> Unit,
+) {
+    fun listenedOf(id: String): Long = stats[id]?.values?.sum() ?: 0L
+    val totalAll = stats.values.sumOf { m -> m.values.sum() }
+    val withData = playlists.filter { listenedOf(it.id) > 0 }
+    // 选中的列表被删掉时回落到时长最长的那个
+    val selected = withData.firstOrNull { it.id == selectedId }
+        ?: withData.maxByOrNull { listenedOf(it.id) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        Text("播放统计", style = MaterialTheme.typography.headlineMedium)
+        Spacer(Modifier.height(10.dp))
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text(
+                    "总听歌时长",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(formatListenTime(totalAll), style = MaterialTheme.typography.headlineMedium)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "共 ${withData.size} 个列表有记录 · 统计实际播放时长，拖动进度条不会增加",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+
+        if (withData.isEmpty()) {
+            Box(Modifier.fillMaxWidth().padding(vertical = 60.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    "还没有听歌记录。去播放器播几首，这里就会有数据。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+            return@Column
+        }
+
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            withData.forEach { pl ->
+                FilterChip(
+                    selected = pl.id == selected?.id,
+                    onClick = { onSelect(pl.id) },
+                    label = { Text("${pl.name} · ${formatListenTime(listenedOf(pl.id))}") }
+                )
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+
+        selected?.let { pl ->
+            StatsContent(
+                tracks = pl.tracks,
+                perTrack = stats[pl.id].orEmpty()
+            )
+        }
+    }
+}
+
+/** 饼图 + 图例。显示时长最多的前 7 首，其余合并成「其他」。 */
+@Composable
+private fun StatsContent(
+    tracks: List<BiliTrack>,
+    perTrack: Map<String, Long>,
+    modifier: Modifier = Modifier,
+) {
+    val total = perTrack.values.sum()
+    val sorted = tracks
+        .map { it to (perTrack[it.bvid] ?: 0L) }
+        .filter { it.second > 0 }
+        .sortedByDescending { it.second }
+
+    data class Slice(val label: String, val seconds: Long, val color: Color)
+
+    val slices: List<Slice> = if (sorted.size <= 7) {
+        sorted.mapIndexed { i, (t, sec) ->
+            Slice(t.title.ifBlank { t.bvid }, sec, STATS_COLORS[i % STATS_COLORS.size])
+        }
+    } else {
+        val head = sorted.take(7).mapIndexed { i, (t, sec) ->
+            Slice(t.title.ifBlank { t.bvid }, sec, STATS_COLORS[i % STATS_COLORS.size])
+        }
+        val rest = sorted.drop(7).sumOf { it.second }
+        head + Slice("其他", rest, STATS_COLORS[7])
+    }
+
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("累计 ${formatListenTime(total)}", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "统计的是实际播放时长，拖动进度条不会增加。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (total <= 0) return@Column
+        Canvas(
+            modifier = Modifier
+                .size(200.dp)
+                .align(Alignment.CenterHorizontally)
+        ) {
+            var startAngle = -90f
+            slices.forEach { slice ->
+                val sweep = slice.seconds.toFloat() / total.toFloat() * 360f
+                drawArc(
+                    color = slice.color,
+                    startAngle = startAngle,
+                    sweepAngle = sweep,
+                    useCenter = true
+                )
+                startAngle += sweep
+            }
+        }
+        slices.forEach { slice ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(12.dp)
+                        .background(slice.color, RoundedCornerShape(3.dp))
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    slice.label,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "${formatListenTime(slice.seconds)} · ${slice.seconds * 100 / total}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
 
@@ -1265,10 +1542,33 @@ private fun LogScreen(uiState: PlayerUiState) {
     }
 }
 
+/** 从「关于」进入的日志页，带返回按钮（日志已从底部导航移除）。 */
+@Composable
+private fun LogScreenPage(uiState: PlayerUiState, onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("返回")
+            }
+        }
+        LogScreen(uiState)
+    }
+}
+
 @Composable
 private fun AboutScreen(
     checking: Boolean,
     checkResult: String?,
+    onOpenLogs: () -> Unit,
     onCheckUpdate: () -> Unit,
 ) {
     Column(
@@ -1304,6 +1604,11 @@ private fun AboutScreen(
             textStyle = MaterialTheme.typography.bodyMedium
         )
         Spacer(Modifier.weight(1f))
+        OutlinedButton(onClick = onOpenLogs, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("运行日志")
+        }
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)

@@ -40,6 +40,7 @@ class PlayerService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var notifJob: Job? = null
     private var progressJob: Job? = null
+    private var lyricsJob: Job? = null
     private var lastCoverUrl: String? = null
     private var lastArt: Bitmap? = null
 
@@ -59,14 +60,18 @@ class PlayerService : Service() {
                     updatePlaybackState(playing, time)
                 }
         }
-        // 标题/时长/封面/通知：变化时更新
+        // 标题/时长/封面/当前歌词行/通知：变化时更新。
+        // 歌词行放进 key 里，这样灵动岛/通知的副标题会随着播放实时刷新。
         notifJob = scope.launch {
             PlayerController.state
-                .map { Triple(it.isPlaying, it.currentTitle, it.currentBvid) to (it.duration to it.currentCover) }
+                .map {
+                    Triple(it.isPlaying, it.currentTitle, it.currentBvid) to
+                        Triple(it.duration, it.currentCover, it.currentLyricLine)
+                }
                 .distinctUntilChanged()
                 .collect { (info, meta) ->
                     val (playing, title, bvid) = info
-                    val (duration, cover) = meta
+                    val (duration, cover, lyric) = meta
                     val art = if (cover.isNotBlank() && cover != lastCoverUrl) {
                         lastCoverUrl = cover
                         withContext(Dispatchers.IO) { fetchCover(cover) }
@@ -74,9 +79,24 @@ class PlayerService : Service() {
                         null
                     }
                     if (art != null) lastArt = art
-                    updateMediaMetadata(title, bvid, duration, art)
+                    updateMediaMetadata(title, bvid, duration, art, lyric)
                     val nm = getSystemService(NotificationManager::class.java)
-                    nm.notify(NOTIF_ID, buildNotification(playing, title))
+                    nm.notify(NOTIF_ID, buildNotification(playing, title, lyric))
+                }
+        }
+        // 桌面歌词悬浮窗：开关或歌词行变化时同步
+        LyricsOverlay.init(applicationContext)
+        lyricsJob = scope.launch {
+            PlayerController.state
+                .map { it.desktopLyrics to it.currentLyricLine }
+                .distinctUntilChanged()
+                .collect { (enabled, line) ->
+                    if (!enabled || !LyricsOverlay.canDraw()) {
+                        LyricsOverlay.hide()
+                        return@collect
+                    }
+                    LyricsOverlay.show()
+                    LyricsOverlay.update(line)
                 }
         }
     }
@@ -120,11 +140,20 @@ class PlayerService : Service() {
         mediaSession?.setPlaybackState(state)
     }
 
-    /** 更新媒体元数据（标题/媒体ID/时长/封面）。 */
-    private fun updateMediaMetadata(title: String, bvid: String, duration: Double, art: Bitmap?) {
+    /** 更新媒体元数据（标题=当前歌词、副标题=视频名 / 媒体ID / 时长 / 封面）。 */
+    private fun updateMediaMetadata(
+        title: String,
+        bvid: String,
+        duration: Double,
+        art: Bitmap?,
+        lyric: String = "",
+    ) {
         val builder = MediaMetadata.Builder()
-            .putString(MediaMetadata.METADATA_KEY_TITLE, title.ifBlank { "BiliPlayer" })
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, "BiliPlayer")
+            .putString(
+                MediaMetadata.METADATA_KEY_TITLE,
+                lyric.ifBlank { title.ifBlank { "BiliPlayer" } }
+            )
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, title.ifBlank { "BiliPlayer" })
             .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, bvid)
             .putLong(MediaMetadata.METADATA_KEY_DURATION, (duration * 1000).toLong()) // 单位是毫秒
         if (art != null) {
@@ -163,6 +192,8 @@ class PlayerService : Service() {
     override fun onDestroy() {
         notifJob?.cancel()
         progressJob?.cancel()
+        lyricsJob?.cancel()
+        LyricsOverlay.hide()
         scope.cancel()
         mediaSession?.isActive = false
         mediaSession?.release()
@@ -201,7 +232,11 @@ class PlayerService : Service() {
         }
     }
 
-    private fun buildNotification(isPlaying: Boolean, title: String): Notification {
+    private fun buildNotification(
+        isPlaying: Boolean,
+        title: String,
+        lyric: String = "",
+    ): Notification {
         val prevIntent = PendingIntent.getService(
             this, 1, Intent(this, PlayerService::class.java).setAction(ACTION_PREV),
             PendingIntent.FLAG_IMMUTABLE
@@ -233,8 +268,9 @@ class PlayerService : Service() {
         return builder
             .setSmallIcon(if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play)
             .setLargeIcon(lastArt)
-            .setContentTitle("BiliPlayer")
-            .setContentText(title.ifBlank { "后台播放中" })
+            // 灵动岛：标题位置放当前歌词，副标题位置放视频名
+            .setContentTitle(lyric.ifBlank { title.ifBlank { "BiliPlayer" } })
+            .setContentText(title.ifBlank { "BiliPlayer · 后台播放中" })
             .setContentIntent(contentIntent)
             .setOngoing(true)
             .setVisibility(Notification.VISIBILITY_PUBLIC)

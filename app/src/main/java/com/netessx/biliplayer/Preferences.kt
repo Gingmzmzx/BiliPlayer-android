@@ -15,6 +15,15 @@ object Preferences {
     private const val KEY_AUTO_FULLSCREEN = "auto_fullscreen"
     private const val KEY_LAST_NOTICE_ID = "last_notice_id"
     private const val KEY_IGNORED_UPDATE_CODE = "ignored_update_code"
+    private const val KEY_DESKTOP_LYRICS = "desktop_lyrics"
+    private const val KEY_LYRICS_X = "lyrics_overlay_x"
+    private const val KEY_LYRICS_Y = "lyrics_overlay_y"
+    private const val KEY_LYRICS_SIZE = "lyrics_overlay_size"
+    private const val KEY_LYRICS_LOCKED = "lyrics_overlay_locked"
+    private const val KEY_LRCLIB_BASE = "lrclib_base_url"
+    private const val KEY_LYRICS_DISCLAIMER = "lyrics_disclaimer_accepted"
+
+    const val DEFAULT_LRCLIB_BASE = "https://lrclib.net/api"
 
     private fun sp(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -54,6 +63,53 @@ object Preferences {
     fun lastSeenNoticeId(context: Context): Long = sp(context).getLong(KEY_LAST_NOTICE_ID, 0L)
     fun saveLastSeenNoticeId(context: Context, id: Long) {
         sp(context).edit().putLong(KEY_LAST_NOTICE_ID, id).apply()
+    }
+
+    // ----- 桌面歌词（悬浮窗） -----
+    fun desktopLyrics(context: Context): Boolean = sp(context).getBoolean(KEY_DESKTOP_LYRICS, false)
+    fun saveDesktopLyrics(context: Context, enabled: Boolean) {
+        sp(context).edit().putBoolean(KEY_DESKTOP_LYRICS, enabled).apply()
+    }
+
+    /** 悬浮窗位置（相对顶部居中的偏移，px）。 */
+    fun lyricsOverlayX(context: Context): Int = sp(context).getInt(KEY_LYRICS_X, 0)
+    fun lyricsOverlayY(context: Context): Int = sp(context).getInt(KEY_LYRICS_Y, 140)
+    fun saveLyricsOverlayPos(context: Context, x: Int, y: Int) {
+        sp(context).edit().putInt(KEY_LYRICS_X, x).putInt(KEY_LYRICS_Y, y).apply()
+    }
+    fun clearLyricsOverlayPos(context: Context) {
+        sp(context).edit().remove(KEY_LYRICS_X).remove(KEY_LYRICS_Y).apply()
+    }
+
+    /** 悬浮窗字号（sp）。 */
+    fun lyricsFontSize(context: Context): Float = sp(context).getFloat(KEY_LYRICS_SIZE, 18f)
+    fun saveLyricsFontSize(context: Context, size: Float) {
+        sp(context).edit().putFloat(KEY_LYRICS_SIZE, size).apply()
+    }
+
+    /** 锁定位置：锁定后悬浮窗不可拖动、也不拦截触摸。 */
+    fun lyricsOverlayLocked(context: Context): Boolean =
+        sp(context).getBoolean(KEY_LYRICS_LOCKED, false)
+    fun saveLyricsOverlayLocked(context: Context, locked: Boolean) {
+        sp(context).edit().putBoolean(KEY_LYRICS_LOCKED, locked).apply()
+    }
+
+    /** 自定义 lrclib 接口地址（可换成自建镜像）。 */
+    fun lrcLibBaseUrl(context: Context): String =
+        sp(context).getString(KEY_LRCLIB_BASE, DEFAULT_LRCLIB_BASE)?.ifBlank { DEFAULT_LRCLIB_BASE }
+            ?: DEFAULT_LRCLIB_BASE
+    fun saveLrcLibBaseUrl(context: Context, url: String) {
+        val v = url.trim().trimEnd('/')
+        sp(context).edit()
+            .putString(KEY_LRCLIB_BASE, v.ifBlank { DEFAULT_LRCLIB_BASE })
+            .apply()
+    }
+
+    /** 是否已同意「歌词来源与免责声明」。 */
+    fun lyricsDisclaimerAccepted(context: Context): Boolean =
+        sp(context).getBoolean(KEY_LYRICS_DISCLAIMER, false)
+    fun saveLyricsDisclaimerAccepted(context: Context, accepted: Boolean) {
+        sp(context).edit().putBoolean(KEY_LYRICS_DISCLAIMER, accepted).apply()
     }
 
     // ----- 已忽略的更新版本（按 versionCode 记录，不能用 versionName） -----

@@ -2,13 +2,16 @@ package com.netessx.biliplayer
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.text.method.LinkMovementMethod
 import android.widget.TextView
 import android.widget.Toast
@@ -40,6 +43,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -75,6 +79,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -149,11 +154,16 @@ fun BiliPlayerApp() {
     val webView by PlayerController.webView.collectAsState()
     val library by PlaylistStore.playlists.collectAsState()
     val stats by PlaybackStats.stats.collectAsState()
+    val lyrics by LyricsStore.entries.collectAsState()
     var screen by remember { mutableStateOf(AppScreen.LIBRARY) }
     var showWebView by remember { mutableStateOf(Preferences.autoFullscreen(context)) }
     var currentTab by remember { mutableStateOf(AppTab.PLAYER) }
     var showLogin by remember { mutableStateOf(false) }
     var showLogs by remember { mutableStateOf(false) }
+    // 首次启动的歌词来源免责声明（同意过就不再出现）
+    var showLyricsDisclaimer by remember {
+        mutableStateOf(!Preferences.lyricsDisclaimerAccepted(context))
+    }
     // 统计页选中的列表。放在这里而不是 StatsScreen 内部：切 tab 时页面会被销毁，
     // 内部 remember 会丢；提到这里才能记住上次的选择。
     var statsSelectedId by remember { mutableStateOf<String?>(null) }
@@ -296,6 +306,7 @@ fun BiliPlayerApp() {
                         Box(Modifier.weight(1f)) {
                             PlayerScreen(
                                 uiState = uiState,
+                                lyrics = lyrics[uiState.currentBvid],
                                 showWebView = showWebView,
                                 onToggleWebView = { showWebView = !showWebView },
                                 onBack = {
@@ -438,6 +449,18 @@ fun BiliPlayerApp() {
         )
     }
 
+    // ---------- 歌词来源免责声明（首次启动） ----------
+    if (showLyricsDisclaimer) {
+        LyricsDisclaimerDialog(
+            onAgree = {
+                Preferences.saveLyricsDisclaimerAccepted(context, true)
+                showLyricsDisclaimer = false
+            },
+            // 不同意就不用这个应用：直接退出
+            onDisagree = { context.findActivity()?.finish() }
+        )
+    }
+
     // ---------- 播放列表库：重命名 / 删除 ----------
     renameTarget?.let { pl ->
         RenameDialog(
@@ -470,6 +493,57 @@ fun BiliPlayerApp() {
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } }
         )
     }
+}
+
+/**
+ * 歌词来源免责声明。
+ *
+ * 歌词全部来自第三方 lrclib.net，本应用既不生产也不审核，
+ * 因此首次启动时必须让用户明确知晓并同意，未同意前不自动联网检索歌词。
+ */
+@Composable
+private fun LyricsDisclaimerDialog(onAgree: () -> Unit, onDisagree: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDisagree,
+        title = { Text("歌词来源与免责声明") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    "本应用的歌词由第三方歌词库 lrclib.net 按其公开接口检索得到。",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    "• 歌词内容由 lrclib.net 及其贡献者提供。本软件不生产、不存储、不审核歌词，" +
+                        "与 lrclib.net 也没有任何隶属或合作关系。",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "• 歌词的准确性、完整性与合法性由来源方负责。歌词可能错漏或与音频不同步，" +
+                        "你可以用偏移微调，但请自行判断是否可信。",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "• 本软件及开发者不对使用歌词产生的任何直接或间接后果承担法律责任。" +
+                        "如不同意，请勿使用歌词相关功能。",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "• 你也可以在歌词弹窗里改用自建接口地址，或直接粘贴自有歌词。",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "点击「同意并继续」表示你已阅读并接受上述说明。",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onAgree) { Text("同意并继续") } },
+        dismissButton = { TextButton(onClick = onDisagree) { Text("不同意") } }
+    )
 }
 
 @Composable
@@ -940,11 +1014,18 @@ private fun LoginScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun PlayerScreen(uiState: PlayerUiState, showWebView: Boolean, onToggleWebView: () -> Unit, onBack: () -> Unit) {
+private fun PlayerScreen(
+    uiState: PlayerUiState,
+    lyrics: LyricsEntry?,
+    showWebView: Boolean,
+    onToggleWebView: () -> Unit,
+    onBack: () -> Unit,
+) {
     var scrubbing by remember { mutableStateOf(false) }
     var scrubValue by remember { mutableStateOf(0.0) }
     var showTimerMenu by remember { mutableStateOf(false) }
     var showCustomTimerDialog by remember { mutableStateOf(false) }
+    var showLyricsDialog by remember { mutableStateOf(false) }
     val duration = if (uiState.duration > 0) uiState.duration else 1.0
     val displayed = if (scrubbing) scrubValue else uiState.currentTime
 
@@ -995,6 +1076,12 @@ private fun PlayerScreen(uiState: PlayerUiState, showWebView: Boolean, onToggleW
                 )
             }
         }
+
+        LyricsPreview(
+            entry = lyrics,
+            positionSec = uiState.currentTime,
+            onClick = { showLyricsDialog = true }
+        )
 
         Slider(
             value = displayed.coerceIn(0.0, duration).toFloat(),
@@ -1116,6 +1203,324 @@ private fun PlayerScreen(uiState: PlayerUiState, showWebView: Boolean, onToggleW
             }
         )
     }
+
+    if (showLyricsDialog) {
+        LyricsDialog(
+            uiState = uiState,
+            entry = lyrics,
+            onSearch = { q -> PlayerController.searchLyricsForCurrent(q) },
+            onSave = { t -> PlayerController.saveLyricsForCurrent(t) },
+            onDismiss = { showLyricsDialog = false }
+        )
+    }
+}
+
+/**
+ * 播放器上的歌词预览：当前行高亮，上下各一行做上下文。
+ * 点一下打开歌词弹窗（搜索 / 手动指定歌名 / 粘贴 LRC）。
+ */
+@Composable
+private fun LyricsPreview(entry: LyricsEntry?, positionSec: Double, onClick: () -> Unit) {
+    val lines = remember(entry?.bvid, entry?.synced, entry?.plain) { entry?.lines().orEmpty() }
+    // 偏移：正数让歌词延后出现
+    val pos = positionSec - (entry?.offsetMs ?: 0L) / 1000.0
+    val active = if (lines.isEmpty()) -1 else activeLineIndex(lines, pos)
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (lines.isEmpty()) {
+                Text(
+                    "暂无歌词 · 点此搜索或手动填写",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                for (offset in -2..2) {
+                    val i = (if (active < 0) 0 else active) + offset
+                    val line = lines.getOrNull(i) ?: continue
+                    val isActive = i == active && active >= 0
+                    Text(
+                        line.text.ifBlank { "♪" },
+                        style = if (isActive) MaterialTheme.typography.titleMedium
+                        else MaterialTheme.typography.bodySmall,
+                        color = if (isActive) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Text(
+                    "点此查看全部歌词",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LyricsDialog(
+    uiState: PlayerUiState,
+    entry: LyricsEntry?,
+    onSearch: (String) -> Unit,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    var query by remember(uiState.currentBvid) { mutableStateOf(guessSongName(uiState.currentTitle)) }
+    var pasted by remember(uiState.currentBvid) { mutableStateOf(entry?.synced.orEmpty()) }
+    var showPaste by remember { mutableStateOf(false) }
+    val lines = remember(entry?.bvid, entry?.synced, entry?.plain) { entry?.lines().orEmpty() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("歌词") },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (lines.isNotEmpty()) {
+                    Text(
+                        buildString {
+                            if (entry?.manual == true) append("手动词条")
+                            else append("已匹配：${entry?.trackName.orEmpty()} - ${entry?.artistName.orEmpty()}")
+                            if (entry?.hasSyncedLines != true) append("（纯文本，无时间轴）")
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    // 跟着播放位置滚动并高亮当前行；固定高度以便嵌在可滚动弹窗里
+                    val listState = rememberLazyListState()
+                    val active = if (entry?.hasSyncedLines == true)
+                        activeLineIndex(
+                            lines,
+                            uiState.currentTime - (entry.offsetMs) / 1000.0
+                        ) else -1
+                    LaunchedEffect(active) {
+                        if (active >= 0) listState.animateScrollToItem(active)
+                    }
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxWidth().height(200.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        itemsIndexed(lines) { i, line ->
+                            Text(
+                                line.text.ifBlank { "♪" },
+                                style = if (i == active) MaterialTheme.typography.titleMedium
+                                else MaterialTheme.typography.bodySmall,
+                                color = if (i == active) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                    // 偏移微调：歌词比音频快就点「延后」，慢就点「提前」
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text("偏移", style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick = { PlayerController.adjustLyricsOffset(-500) }) {
+                            Text("提前")
+                        }
+                        Text(
+                            "%.1fs".format((entry?.offsetMs ?: 0L) / 1000.0),
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                        OutlinedButton(onClick = { PlayerController.adjustLyricsOffset(500) }) {
+                            Text("延后")
+                        }
+                        TextButton(onClick = {
+                            PlayerController.adjustLyricsOffset(-(entry?.offsetMs ?: 0L))
+                        }) { Text("归零") }
+                    }
+                    HorizontalDivider()
+                } else {
+                    Text(
+                        "没有找到歌词。可以改一下歌名重新搜索，或直接粘贴带时间轴的歌词（LRC）。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("歌名 / 歌手") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { onSearch(query) },
+                        enabled = !uiState.lyricsSearching && query.isNotBlank()
+                    ) {
+                        if (uiState.lyricsSearching) {
+                            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text("搜索歌词")
+                    }
+                    TextButton(onClick = { showPaste = !showPaste }) {
+                        Text(if (showPaste) "收起" else "粘贴歌词")
+                    }
+                }
+
+                if (showPaste) {
+                    OutlinedTextField(
+                        value = pasted,
+                        onValueChange = { pasted = it },
+                        label = { Text("LRC / 纯文本歌词") },
+                        minLines = 4,
+                        maxLines = 8,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { onSave(pasted) }, enabled = pasted.isNotBlank()) {
+                            Text("保存")
+                        }
+                        TextButton(onClick = { pasted = ""; onSave("") }) { Text("清除") }
+                    }
+                }
+
+                uiState.lyricsStatus?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                HorizontalDivider()
+
+                // 桌面歌词悬浮窗开关（需要「显示在其他应用上层」权限）
+                val canOverlay = Settings.canDrawOverlays(context)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("桌面歌词（悬浮窗）", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            if (canOverlay) "在其他应用上层实时显示当前歌词"
+                            else "需要「显示在其他应用上层」权限",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = uiState.desktopLyrics && canOverlay,
+                        onCheckedChange = { on ->
+                            if (on && !Settings.canDrawOverlays(context)) {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(
+                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                            Uri.parse("package:${context.packageName}")
+                                        )
+                                    )
+                                }
+                            } else {
+                                PlayerController.setDesktopLyrics(on)
+                            }
+                        }
+                    )
+                }
+                if (!canOverlay) {
+                    TextButton(onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                            )
+                        }
+                    }) { Text("去授予权限") }
+                } else if (uiState.desktopLyrics) {
+                    // 字号调整（10–40sp）+ 位置复位；位置本身在桌面歌词上直接拖动
+                    var size by remember { mutableStateOf(LyricsOverlay.currentFontSize()) }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("字号", style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick = {
+                            size = (size - 2f).coerceAtLeast(10f)
+                            LyricsOverlay.setFontSize(size)
+                        }) { Text("A-") }
+                        Text("${size.toInt()}", style = MaterialTheme.typography.labelMedium)
+                        OutlinedButton(onClick = {
+                            size = (size + 2f).coerceAtMost(40f)
+                            LyricsOverlay.setFontSize(size)
+                        }) { Text("A+") }
+                        TextButton(onClick = { LyricsOverlay.resetPosition() }) {
+                            Text("重置位置")
+                        }
+                    }
+                    var locked by remember { mutableStateOf(LyricsOverlay.isLocked()) }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("锁定位置", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "锁定后不可拖动，也不会挡住下层的点击",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = locked,
+                            onCheckedChange = {
+                                locked = it
+                                LyricsOverlay.setLocked(it)
+                            }
+                        )
+                    }
+                    Text(
+                        "桌面上单指拖动改位置，双指捏合改字号",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                HorizontalDivider()
+
+                // 自定义歌词接口地址（可换成自建镜像）
+                var base by remember { mutableStateOf(Preferences.lrcLibBaseUrl(context)) }
+                OutlinedTextField(
+                    value = base,
+                    onValueChange = { base = it },
+                    label = { Text("lrclib 接口地址") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
+                        Preferences.saveLrcLibBaseUrl(context, base)
+                        LrcLib.init(context)
+                        base = Preferences.lrcLibBaseUrl(context)
+                    }) { Text("保存地址") }
+                    TextButton(onClick = {
+                        base = Preferences.DEFAULT_LRCLIB_BASE
+                        Preferences.saveLrcLibBaseUrl(context, base)
+                        LrcLib.init(context)
+                    }) { Text("恢复默认") }
+                }
+                Text(
+                    "默认 ${Preferences.DEFAULT_LRCLIB_BASE}，搜索路径为 {地址}/search",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+    )
 }
 
 @Composable
@@ -1623,6 +2028,16 @@ private fun LinkText(fullText: String, url: String, textStyle: TextStyle = Mater
         }
     }
     Text(annotated, style = textStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** 从 Compose 的 Context 里取出宿主 Activity（用于 finish 等操作）。 */
+private fun Context.findActivity(): Activity? {
+    var ctx: Context = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }
 
 private fun openUrl(context: Context, url: String) {

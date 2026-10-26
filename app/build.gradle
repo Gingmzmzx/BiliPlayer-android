@@ -51,7 +51,7 @@ android {
         minSdk 24
         targetSdk 36
         versionCode buildStamp.toInteger()
-        versionName "1.5.1"
+        versionName "1.6.0 Beta"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }

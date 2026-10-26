@@ -42,6 +42,14 @@ data class PlayerUiState(
     val currentPlaylistId: String = "",
     /** 正在同步哪个列表，空串表示没有同步在进行。 */
     val syncingPlaylistId: String = "",
+    /** 歌词检索中（自动或手动）。 */
+    val lyricsSearching: Boolean = false,
+    /** 歌词检索结果提示。 */
+    val lyricsStatus: String? = null,
+    /** 当前播放位置对应的歌词行（用于灵动岛/通知与桌面歌词）。无歌词时为空串。 */
+    val currentLyricLine: String = "",
+    /** 是否开启桌面歌词悬浮窗。 */
+    val desktopLyrics: Boolean = false,
 )
 
 /**
@@ -79,11 +87,14 @@ object PlayerController {
         appContext = context.applicationContext
         PlaylistStore.init(appContext)
         PlaybackStats.init(appContext)
+        LyricsStore.init(appContext)
+        LrcLib.init(appContext)
         startStatsTicker()
         _state.update {
             it.copy(
                 volume = Preferences.defaultVolume(appContext),
                 playMode = Preferences.playMode(appContext),
+                desktopLyrics = Preferences.desktopLyrics(appContext),
             )
         }
     }
@@ -376,12 +387,182 @@ object PlayerController {
         }
     }
 
+    // ---------- 歌词 ----------
+
+    /** 当前曲目 id → 是否已经在搜；避免同一首重复请求。 */
+    private val lyricsInFlight = mutableSetOf<String>()
+    private var lastLyricsBvid: String = ""
+
+    /**
+     * 切歌时自动按「标题猜出来的歌名」搜歌词；已有歌词（含用户手填）就跳过。
+     *
+     * 抓取/网络偶发失败会让第一次搜索落空（手动再点一次往往就好了），
+     * 所以这里做最多 3 次退避重试，并且每次都用「当时最新的标题」重新猜歌名——
+     * 刚切歌时标题可能还没更新，用旧标题自然会搜不到。
+     */
+    private fun autoLoadLyrics(bvid: String, title: String) {
+        if (bvid.isBlank()) return
+        // 未同意歌词免责声明前不自动联网检索
+        if (!Preferences.lyricsDisclaimerAccepted(appContext)) return
+        if (LyricsStore.get(bvid)?.hasContent == true) return
+        if (!lyricsInFlight.add(bvid)) return
+        scope.launch {
+            var lastQuery = guessSongName(title)
+            var found: LyricsEntry? = null
+            for (attempt in 0 until 3) {
+                if (attempt > 0) delay(1500L * attempt)
+                // 用户可能已经手动搜到，直接收手
+                if (LyricsStore.get(bvid)?.hasContent == true) break
+                val q = guessSongName(_state.value.currentTitle).ifBlank { lastQuery }
+                lastQuery = q
+                if (q.isBlank()) continue
+                val results = LrcLib.search(q)
+                val best = results.firstOrNull { it.hasContent }
+                if (best != null) {
+                    found = best
+                    break
+                }
+            }
+            val existing = LyricsStore.get(bvid)
+            if (found != null && existing?.hasContent != true) {
+                LyricsStore.put(
+                    appContext,
+                    found.copy(bvid = bvid, offsetMs = existing?.offsetMs ?: 0L)
+                )
+                appendLog("已匹配歌词：${found.trackName} - ${found.artistName}")
+            } else if (existing?.hasContent != true) {
+                appendLog("未找到「$lastQuery」的歌词，可手动指定歌名")
+            }
+            lyricsInFlight.remove(bvid)
+        }
+    }
+
+    /** 用用户输入的歌名重新搜索当前曲目。 */
+    fun searchLyricsForCurrent(query: String) {
+        if (!::appContext.isInitialized) return
+        if (!Preferences.lyricsDisclaimerAccepted(appContext)) {
+            _state.update { it.copy(lyricsStatus = "请先同意歌词来源声明") }
+            return
+        }
+        val bvid = _state.value.currentBvid
+        if (bvid.isBlank()) return
+        val q = query.trim()
+        if (q.isEmpty()) return
+        // 手动搜索优先：不因自动重试占着 in-flight 而被挡掉
+        lyricsInFlight.add(bvid)
+        _state.update { it.copy(lyricsSearching = true, lyricsStatus = null) }
+        scope.launch {
+            // 网络偶发失败时再试一次，避免「手动点一遍才成功」
+            var results = LrcLib.search(q)
+            if (results.isEmpty()) {
+                delay(1200)
+                results = LrcLib.search(q)
+            }
+            val best = results.firstOrNull { it.hasContent }
+            if (best != null) {
+                LyricsStore.put(
+                    appContext,
+                    best.copy(bvid = bvid, offsetMs = LyricsStore.get(bvid)?.offsetMs ?: 0L)
+                )
+                val kind = if (best.hasSyncedLines) "" else "（仅纯文本，无时间轴）"
+                _state.update {
+                    it.copy(
+                        lyricsSearching = false,
+                        lyricsStatus = "已匹配：${best.trackName} - ${best.artistName}$kind"
+                    )
+                }
+            } else {
+                _state.update {
+                    it.copy(lyricsSearching = false, lyricsStatus = "没有搜到「$q」，换个歌名试试")
+                }
+            }
+            lyricsInFlight.remove(bvid)
+        }
+    }
+
+    /**
+     * 保存用户自己粘贴的歌词。带 `[mm:ss.xx]` 时间轴的按同步歌词处理，
+     * 否则当纯文本展示。
+     */
+    fun saveLyricsForCurrent(text: String) {
+        if (!::appContext.isInitialized) return
+        val bvid = _state.value.currentBvid
+        if (bvid.isBlank()) return
+        val raw = text.trim()
+        if (raw.isEmpty()) {
+            LyricsStore.remove(appContext, bvid)
+            _state.update { it.copy(lyricsStatus = "已清除该曲歌词") }
+            return
+        }
+        val isSynced = Regex("\\[\\d{1,3}:\\d{1,2}").containsMatchIn(raw)
+        LyricsStore.put(
+            appContext,
+            LyricsEntry(
+                bvid = bvid,
+                trackName = _state.value.currentTitle,
+                synced = if (isSynced) raw else "",
+                plain = if (isSynced) "" else raw,
+                manual = true,
+                offsetMs = LyricsStore.get(bvid)?.offsetMs ?: 0L,
+            )
+        )
+        _state.update {
+            it.copy(lyricsStatus = if (isSynced) "已保存同步歌词" else "已保存歌词（无时间轴）")
+        }
+    }
+
+    // 当前曲目的歌词行缓存：syncState 每秒调用多次，不能每次都重新解析 LRC
+    private var cachedLyricKey: String = ""
+    private var cachedLyricLines: List<LyricLine> = emptyList()
+
+    private fun lyricLineFor(bvid: String, positionSec: Double): String {
+        if (bvid.isBlank()) return ""
+        val entry = LyricsStore.get(bvid) ?: return ""
+        if (!entry.hasSyncedLines) return ""
+        val key = bvid + "|" + entry.synced.hashCode()
+        if (key != cachedLyricKey) {
+            cachedLyricLines = entry.lines()
+            cachedLyricKey = key
+        }
+        // 偏移：正数让歌词延后出现
+        val idx = activeLineIndex(cachedLyricLines, positionSec - entry.offsetMs / 1000.0)
+        return cachedLyricLines.getOrNull(idx)?.text.orEmpty()
+    }
+
+    /** 微调当前曲目的歌词偏移（毫秒），范围 ±10 秒。 */
+    fun adjustLyricsOffset(deltaMs: Long) {
+        if (!::appContext.isInitialized) return
+        val bvid = _state.value.currentBvid
+        if (bvid.isBlank()) return
+        val entry = LyricsStore.get(bvid) ?: return
+        val next = (entry.offsetMs + deltaMs).coerceIn(-10_000L, 10_000L)
+        LyricsStore.put(appContext, entry.copy(offsetMs = next))
+        _state.update { it.copy(lyricsStatus = "歌词偏移 ${next / 1000.0}s") }
+    }
+
+    /** 开关桌面歌词悬浮窗（悬浮窗本身由 PlayerService 管理）。 */
+    fun setDesktopLyrics(enabled: Boolean) {
+        if (!::appContext.isInitialized) return
+        Preferences.saveDesktopLyrics(appContext, enabled)
+        _state.update { it.copy(desktopLyrics = enabled) }
+    }
+
     private fun syncState() {
         val p = player ?: return
+        if (p.currentBvid.isNotBlank() && p.currentBvid != lastLyricsBvid) {
+            lastLyricsBvid = p.currentBvid
+            // 换歌时清掉上一首的检索提示，避免在弹窗里看到过期文案
+            if (_state.value.lyricsStatus != null) {
+                _state.update { it.copy(lyricsStatus = null) }
+            }
+            autoLoadLyrics(p.currentBvid, p.currentTitle)
+        }
+        val lyricLine = lyricLineFor(p.currentBvid, p.currentTime)
         _state.update {
             it.copy(
                 playlist = p.playlist,
                 currentIndex = p.currentIndex,
+                currentLyricLine = lyricLine,
                 currentBvid = p.currentBvid,
                 currentTitle = p.currentTitle,
                 currentCover = p.currentCover,

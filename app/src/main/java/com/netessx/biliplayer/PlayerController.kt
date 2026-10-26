@@ -50,6 +50,8 @@ data class PlayerUiState(
     val currentLyricLine: String = "",
     /** 是否开启桌面歌词悬浮窗。 */
     val desktopLyrics: Boolean = false,
+    /** 当前这次搜索拿到的候选歌词（供用户挑选）。 */
+    val lyricsSearchResults: List<LyricsEntry> = emptyList(),
 )
 
 /**
@@ -450,7 +452,9 @@ object PlayerController {
         if (q.isEmpty()) return
         // 手动搜索优先：不因自动重试占着 in-flight 而被挡掉
         lyricsInFlight.add(bvid)
-        _state.update { it.copy(lyricsSearching = true, lyricsStatus = null) }
+        _state.update {
+            it.copy(lyricsSearching = true, lyricsStatus = null, lyricsSearchResults = emptyList())
+        }
         scope.launch {
             // 网络偶发失败时再试一次，避免「手动点一遍才成功」
             var results = LrcLib.search(q)
@@ -458,25 +462,38 @@ object PlayerController {
                 delay(1200)
                 results = LrcLib.search(q)
             }
-            val best = results.firstOrNull { it.hasContent }
-            if (best != null) {
-                LyricsStore.put(
-                    appContext,
-                    best.copy(bvid = bvid, offsetMs = LyricsStore.get(bvid)?.offsetMs ?: 0L)
+            // 只列出有内容的候选，带时间轴的排前面，交给用户自己挑
+            val usable = results
+                .filter { it.hasContent }
+                .sortedByDescending { it.hasSyncedLines }
+                .map { it.copy(bvid = bvid) }
+            _state.update {
+                it.copy(
+                    lyricsSearching = false,
+                    lyricsSearchResults = usable,
+                    lyricsStatus = if (usable.isEmpty()) "没有搜到「$q」，换个歌名试试"
+                    else "找到 ${usable.size} 条，点一条应用"
                 )
-                val kind = if (best.hasSyncedLines) "" else "（仅纯文本，无时间轴）"
-                _state.update {
-                    it.copy(
-                        lyricsSearching = false,
-                        lyricsStatus = "已匹配：${best.trackName} - ${best.artistName}$kind"
-                    )
-                }
-            } else {
-                _state.update {
-                    it.copy(lyricsSearching = false, lyricsStatus = "没有搜到「$q」，换个歌名试试")
-                }
             }
             lyricsInFlight.remove(bvid)
+        }
+    }
+
+    /** 应用候选列表里的第 [index] 条歌词。 */
+    fun applyLyricsResult(index: Int) {
+        if (!::appContext.isInitialized) return
+        val entry = _state.value.lyricsSearchResults.getOrNull(index) ?: return
+        val bvid = _state.value.currentBvid
+        if (bvid.isBlank()) return
+        LyricsStore.put(
+            appContext,
+            entry.copy(bvid = bvid, offsetMs = LyricsStore.get(bvid)?.offsetMs ?: 0L)
+        )
+        _state.update {
+            it.copy(
+                lyricsSearchResults = emptyList(),
+                lyricsStatus = "已应用：${entry.trackName} - ${entry.artistName}"
+            )
         }
     }
 
@@ -552,8 +569,8 @@ object PlayerController {
         if (p.currentBvid.isNotBlank() && p.currentBvid != lastLyricsBvid) {
             lastLyricsBvid = p.currentBvid
             // 换歌时清掉上一首的检索提示，避免在弹窗里看到过期文案
-            if (_state.value.lyricsStatus != null) {
-                _state.update { it.copy(lyricsStatus = null) }
+            if (_state.value.lyricsStatus != null || _state.value.lyricsSearchResults.isNotEmpty()) {
+                _state.update { it.copy(lyricsStatus = null, lyricsSearchResults = emptyList()) }
             }
             autoLoadLyrics(p.currentBvid, p.currentTitle)
         }

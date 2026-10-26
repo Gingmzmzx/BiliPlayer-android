@@ -1154,19 +1154,9 @@ private fun PlaylistScreen(
     onPlay: (Int) -> Unit,
 ) {
     var prefIndex by remember { mutableStateOf<Int?>(null) }
-    var showStats by remember { mutableStateOf(false) }
     val perTrack = stats[playlistId].orEmpty()
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("播放列表 (${uiState.playlist.size})·长按设置", style = MaterialTheme.typography.titleLarge)
-            TextButton(onClick = { showStats = true }, enabled = uiState.playlist.isNotEmpty()) {
-                Text("听歌统计")
-            }
-        }
+        Text("播放列表 (${uiState.playlist.size})·长按设置", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(8.dp))
         if (uiState.playlist.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1214,13 +1204,6 @@ private fun PlaylistScreen(
             }
         }
     }
-    if (showStats) {
-        StatsDialog(
-            tracks = uiState.playlist,
-            perTrack = perTrack,
-            onDismiss = { showStats = false }
-        )
-    }
     prefIndex?.let { index ->
         TrackPrefDialog(
             uiState = uiState,
@@ -1248,37 +1231,13 @@ private fun formatListenTime(seconds: Long): String {
 private val STATS_COLORS = listOf(
     Color(0xFFFB7299), Color(0xFF23ADE5), Color(0xFF4DD6A8), Color(0xFF7B5CFF),
     Color(0xFFFFA726), Color(0xFF26C6DA), Color(0xFFEC407A), Color(0xFF9CCC65),
+    Color(0xFFFF7043), Color(0xFF5C6BC0), Color(0xFFD4A017), Color(0xFF00897B),
 )
 
 /**
  * 听歌统计弹窗：总时长 + 饼图 + 图例。
  * 显示时长最多的前 7 首，其余合并成「其他」，避免图例过长。
  */
-@Composable
-private fun StatsDialog(
-    tracks: List<BiliTrack>,
-    perTrack: Map<String, Long>,
-    onDismiss: () -> Unit,
-) {
-    val total = perTrack.values.sum()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("听歌统计") },
-        text = {
-            if (total <= 0) {
-                Text("还没有听歌记录。播放几首之后这里就会有数据。")
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
-                ) {
-                    StatsContent(tracks = tracks, perTrack = perTrack)
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
-    )
-}
-
 /**
  * 听歌统计页（底部导航「统计」）。
  * 顶部是跨列表总时长，下面可以切换列表看各自的饼图。
@@ -1365,25 +1324,21 @@ private fun StatsContent(
     perTrack: Map<String, Long>,
     modifier: Modifier = Modifier,
 ) {
-    val total = perTrack.values.sum()
+    // 按 bvid 去重：同一个视频在收藏夹里出现两次时只算一份，
+    // 否则饼图会出现两条同名扇区，百分比还会超过 100%
     val sorted = tracks
+        .distinctBy { it.bvid }
         .map { it to (perTrack[it.bvid] ?: 0L) }
         .filter { it.second > 0 }
         .sortedByDescending { it.second }
 
     data class Slice(val label: String, val seconds: Long, val color: Color)
 
-    val slices: List<Slice> = if (sorted.size <= 7) {
-        sorted.mapIndexed { i, (t, sec) ->
-            Slice(t.title.ifBlank { t.bvid }, sec, STATS_COLORS[i % STATS_COLORS.size])
-        }
-    } else {
-        val head = sorted.take(7).mapIndexed { i, (t, sec) ->
-            Slice(t.title.ifBlank { t.bvid }, sec, STATS_COLORS[i % STATS_COLORS.size])
-        }
-        val rest = sorted.drop(7).sumOf { it.second }
-        head + Slice("其他", rest, STATS_COLORS[7])
+    // 不做「其他」合并：每一首都单独列出，色板循环使用
+    val slices: List<Slice> = sorted.mapIndexed { i, (t, sec) ->
+        Slice(t.title.ifBlank { t.bvid }, sec, STATS_COLORS[i % STATS_COLORS.size])
     }
+    val total = sorted.sumOf { it.second }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("累计 ${formatListenTime(total)}", style = MaterialTheme.typography.titleMedium)
@@ -1572,7 +1527,11 @@ private fun AboutScreen(
     onCheckUpdate: () -> Unit,
 ) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            // 内容比一屏长，必须可滚动，否则底部按钮/版本文本会被挤出屏幕
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("BiliPlayer", style = MaterialTheme.typography.headlineMedium)
@@ -1603,7 +1562,8 @@ private fun AboutScreen(
             "https://afdian.com/a/Gingmzmzx",
             textStyle = MaterialTheme.typography.bodyMedium
         )
-        Spacer(Modifier.weight(1f))
+        // 可滚动布局里不能用 weight 占位（高度无界），改用固定间距
+        Spacer(Modifier.height(16.dp))
         OutlinedButton(onClick = onOpenLogs, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))

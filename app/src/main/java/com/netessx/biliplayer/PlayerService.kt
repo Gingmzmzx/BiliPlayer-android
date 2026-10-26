@@ -214,9 +214,14 @@ class PlayerService : Service() {
             this, 3, Intent(this, PlayerService::class.java).setAction(ACTION_NEXT),
             PendingIntent.FLAG_IMMUTABLE
         )
+        // 点通知回到已有界面，而不是再建一个新的 MainActivity：
+        // 新建实例会重置 Compose 状态（回到列表库），还会把正在播放的 WebView 抢走导致播放中断。
         val contentIntent = PendingIntent.getActivity(
-            this, 4, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE
+            this, 4,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

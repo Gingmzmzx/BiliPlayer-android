@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -80,6 +81,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -163,6 +165,10 @@ fun BiliPlayerApp() {
     var currentTab by remember { mutableStateOf(AppTab.PLAYER) }
     var showLogin by remember { mutableStateOf(false) }
     var showLogs by remember { mutableStateOf(false) }
+    // 实验性沉浸式播放页
+    var immersive by remember { mutableStateOf(false) }
+    // 歌词弹窗由最外层托管：常规播放页和沉浸页都能打开同一个
+    var showLyricsDialog by remember { mutableStateOf(false) }
     // 首次启动的歌词来源免责声明（同意过就不再出现）
     var showLyricsDisclaimer by remember {
         mutableStateOf(!Preferences.lyricsDisclaimerAccepted(context))
@@ -224,15 +230,20 @@ fun BiliPlayerApp() {
         }
     }
 
-    // 进入播放器时按"自动全屏"偏好决定默认显示 WebView 还是封面
+    // 进入播放器时按偏好决定默认显示 WebView 还是封面；可设为直接进沉浸页
     LaunchedEffect(inMain) {
-        if (inMain) showWebView = Preferences.autoFullscreen(context)
+        if (inMain) {
+            showWebView = Preferences.autoFullscreen(context)
+            if (Preferences.immersiveDefault(context)) immersive = true
+        }
     }
 
     // 抓取/同步期间必须露出 WebView（B 站要渲染才能出侧栏和卡片）；
     // 播放器页则由"显示画面"开关决定
     val showWebPanel = when {
         uiState.isFetching -> true
+        // 沉浸页不显示视频画面，只留封面背景
+        immersive -> false
         inMain && currentTab == AppTab.PLAYER -> showWebView
         else -> false
     }
@@ -249,8 +260,12 @@ fun BiliPlayerApp() {
     }
 
     Scaffold(
+        // 沉浸页让背景铺满整屏（含状态栏/手势条），内容自己在内部避让系统栏
+        contentWindowInsets = if (immersive) WindowInsets(0, 0, 0, 0)
+        else ScaffoldDefaults.contentWindowInsets,
         bottomBar = {
-            if (inMain) {
+            // 沉浸页全屏，不要底部导航栏
+            if (inMain && !immersive) {
                 NavigationBar {
                     AppTab.entries.forEach { tab ->
                         NavigationBarItem(
@@ -307,18 +322,33 @@ fun BiliPlayerApp() {
                     AppTab.PLAYER -> Column(Modifier.fillMaxSize()) {
                         Spacer(Modifier.height(if (showWebPanel) 240.dp else 0.dp))
                         Box(Modifier.weight(1f)) {
-                            PlayerScreen(
-                                uiState = uiState,
-                                lyrics = lyrics[uiState.currentBvid],
-                                showWebView = showWebView,
-                                onToggleWebView = { showWebView = !showWebView },
-                                onBack = {
-                                    // 返回列表库：停止播放、清空状态、停掉前台服务
-                                    PlayerController.stop()
-                                    PlayerService.stop(context)
-                                    screen = AppScreen.LIBRARY
-                                }
-                            )
+                            // 返回列表库：停止播放、清空状态、停掉前台服务
+                            val goBack: () -> Unit = {
+                                PlayerController.stop()
+                                PlayerService.stop(context)
+                                screen = AppScreen.LIBRARY
+                                immersive = false
+                            }
+                            val openLyrics: () -> Unit = { showLyricsDialog = true }
+                            if (immersive) {
+                                ImmersivePlayerScreen(
+                                    uiState = uiState,
+                                    lyricsEntry = lyrics[uiState.currentBvid],
+                                    onOpenLyrics = openLyrics,
+                                    onBack = goBack,
+                                    onExit = { immersive = false }
+                                )
+                            } else {
+                                PlayerScreen(
+                                    uiState = uiState,
+                                    lyrics = lyrics[uiState.currentBvid],
+                                    showWebView = showWebView,
+                                    onToggleWebView = { showWebView = !showWebView },
+                                    onEnterImmersive = { immersive = true },
+                                    onOpenLyrics = openLyrics,
+                                    onBack = goBack
+                                )
+                            }
                         }
                     }
                     AppTab.PLAYLIST -> PlaylistScreen(
@@ -450,6 +480,19 @@ fun BiliPlayerApp() {
             title = { Text("提示") },
             text = { Text(msg) },
             confirmButton = { TextButton(onClick = { downloadMessage = null }) { Text("知道了") } }
+        )
+    }
+
+    // ---------- 歌词弹窗 ----------
+    if (showLyricsDialog) {
+        LyricsDialog(
+            uiState = uiState,
+            entry = lyrics[uiState.currentBvid],
+            onSearch = { q -> PlayerController.searchLyricsForCurrent(q) },
+            onApply = { i -> PlayerController.applyLyricsResult(i) },
+            onSave = { t -> PlayerController.saveLyricsForCurrent(t) },
+            onSeek = { sec -> PlayerController.seek(sec) },
+            onDismiss = { showLyricsDialog = false }
         )
     }
 
@@ -1023,13 +1066,14 @@ private fun PlayerScreen(
     lyrics: LyricsEntry?,
     showWebView: Boolean,
     onToggleWebView: () -> Unit,
+    onEnterImmersive: () -> Unit,
+    onOpenLyrics: () -> Unit,
     onBack: () -> Unit,
 ) {
     var scrubbing by remember { mutableStateOf(false) }
     var scrubValue by remember { mutableStateOf(0.0) }
     var showTimerMenu by remember { mutableStateOf(false) }
     var showCustomTimerDialog by remember { mutableStateOf(false) }
-    var showLyricsDialog by remember { mutableStateOf(false) }
     val duration = if (uiState.duration > 0) uiState.duration else 1.0
     val displayed = if (scrubbing) scrubValue else uiState.currentTime
 
@@ -1050,6 +1094,7 @@ private fun PlayerScreen(
                 TextButton(onClick = onToggleWebView) {
                     Text(if (showWebView) "隐藏页面" else "显示页面")
                 }
+                TextButton(onClick = onEnterImmersive) { Text("沉浸") }
                 TextButton(onClick = onBack) {
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowBack,
@@ -1084,7 +1129,7 @@ private fun PlayerScreen(
         LyricsPreview(
             entry = lyrics,
             positionSec = uiState.currentTime,
-            onClick = { showLyricsDialog = true }
+            onClick = onOpenLyrics
         )
 
         Slider(
@@ -1208,17 +1253,6 @@ private fun PlayerScreen(
         )
     }
 
-    if (showLyricsDialog) {
-        LyricsDialog(
-            uiState = uiState,
-            entry = lyrics,
-            onSearch = { q -> PlayerController.searchLyricsForCurrent(q) },
-            onApply = { i -> PlayerController.applyLyricsResult(i) },
-            onSave = { t -> PlayerController.saveLyricsForCurrent(t) },
-            onSeek = { sec -> PlayerController.seek(sec) },
-            onDismiss = { showLyricsDialog = false }
-        )
-    }
 }
 
 /**
@@ -1912,6 +1946,29 @@ private fun SettingsScreen(uiState: PlayerUiState) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("设置", style = MaterialTheme.typography.headlineMedium)
+
+        // ---------- 界面 ----------
+        Text("界面", style = MaterialTheme.typography.titleMedium)
+        var immersiveDefault by remember { mutableStateOf(Preferences.immersiveDefault(context)) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("默认进入沉浸模式", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "开始播放时直接进入沉浸式播放页，而不是常规播放器",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = immersiveDefault,
+                onCheckedChange = {
+                    immersiveDefault = it
+                    Preferences.saveImmersiveDefault(context, it)
+                }
+            )
+        }
+
+        HorizontalDivider()
 
         // ---------- 歌词来源 ----------
         Text("歌词来源", style = MaterialTheme.typography.titleMedium)

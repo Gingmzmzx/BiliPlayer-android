@@ -23,6 +23,7 @@ object Preferences {
     private const val KEY_LRCLIB_BASE = "lrclib_base_url"
     private const val KEY_LYRICS_DISCLAIMER = "lyrics_disclaimer_accepted"
     private const val KEY_INSTALL_ID = "install_id"
+    private const val KEY_IMMERSIVE_DEFAULT = "immersive_default"
 
     const val DEFAULT_LRCLIB_BASE = "https://lrclib.net/api"
 
@@ -64,6 +65,13 @@ object Preferences {
     fun lastSeenNoticeId(context: Context): Long = sp(context).getLong(KEY_LAST_NOTICE_ID, 0L)
     fun saveLastSeenNoticeId(context: Context, id: Long) {
         sp(context).edit().putLong(KEY_LAST_NOTICE_ID, id).apply()
+    }
+
+    // ----- 默认进入沉浸式播放页 -----
+    fun immersiveDefault(context: Context): Boolean =
+        sp(context).getBoolean(KEY_IMMERSIVE_DEFAULT, false)
+    fun saveImmersiveDefault(context: Context, enabled: Boolean) {
+        sp(context).edit().putBoolean(KEY_IMMERSIVE_DEFAULT, enabled).apply()
     }
 
     // ----- 桌面歌词（悬浮窗） -----

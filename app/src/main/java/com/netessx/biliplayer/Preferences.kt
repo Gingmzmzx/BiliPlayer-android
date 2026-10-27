@@ -22,6 +22,7 @@ object Preferences {
     private const val KEY_LYRICS_LOCKED = "lyrics_overlay_locked"
     private const val KEY_LRCLIB_BASE = "lrclib_base_url"
     private const val KEY_LYRICS_DISCLAIMER = "lyrics_disclaimer_accepted"
+    private const val KEY_INSTALL_ID = "install_id"
 
     const val DEFAULT_LRCLIB_BASE = "https://lrclib.net/api"
 
@@ -105,6 +106,19 @@ object Preferences {
             .apply()
     }
 
+    /**
+     * 本机安装标识：首次调用随机生成并持久化。
+     * 用于给 lrclib 的 User-Agent 加上「每台设备/每次安装都不同」的尾巴，
+     * 不涉及任何硬件标识（IMEI/Android ID 之类），重装即变。
+     */
+    fun installId(context: Context): String {
+        val prefs = sp(context)
+        prefs.getString(KEY_INSTALL_ID, null)?.takeIf { it.isNotBlank() }?.let { return it }
+        val id = java.util.UUID.randomUUID().toString().replace("-", "").take(8)
+        prefs.edit().putString(KEY_INSTALL_ID, id).apply()
+        return id
+    }
+
     /** 是否已同意「歌词来源与免责声明」。 */
     fun lyricsDisclaimerAccepted(context: Context): Boolean =
         sp(context).getBoolean(KEY_LYRICS_DISCLAIMER, false)
@@ -146,6 +160,27 @@ object Preferences {
             root.put(bvid, o)
         }
         sp(context).edit().putString(KEY_P_PREF, root.toString()).apply()
+    }
+
+    /** 导出全部单曲偏好（原始 JSON 字符串，结构 `{bvid:{p,beginTime,endTime}}`）。 */
+    fun exportPreferencesJson(context: Context): String =
+        sp(context).getString(KEY_P_PREF, "{}")?.ifBlank { "{}" } ?: "{}"
+
+    /** 合并导入的单曲偏好（同 bvid 覆盖）。返回导入条数。 */
+    fun importPreferencesJson(context: Context, json: String): Int {
+        val incoming = runCatching { JSONObject(json) }.getOrNull() ?: return 0
+        val raw = sp(context).getString(KEY_P_PREF, null)
+        val root = runCatching { raw?.let { JSONObject(it) } ?: JSONObject() }
+            .getOrDefault(JSONObject())
+        var count = 0
+        incoming.keys().forEach { bvid ->
+            incoming.optJSONObject(bvid)?.let {
+                root.put(bvid, it)
+                count++
+            }
+        }
+        sp(context).edit().putString(KEY_P_PREF, root.toString()).apply()
+        return count
     }
 
     fun clearPreference(context: Context, bvid: String) {

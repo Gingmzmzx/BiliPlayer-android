@@ -546,13 +546,16 @@ object PlayerController {
         return cachedLyricLines.getOrNull(idx)?.text.orEmpty()
     }
 
-    /** 微调当前曲目的歌词偏移（毫秒），范围 ±10 秒。 */
+    /**
+     * 微调当前曲目的歌词偏移（毫秒）。
+     * 不设上限：不同视频可能有整段前奏/片头差异，钳制反而挡住正当需求。
+     */
     fun adjustLyricsOffset(deltaMs: Long) {
         if (!::appContext.isInitialized) return
         val bvid = _state.value.currentBvid
         if (bvid.isBlank()) return
         val entry = LyricsStore.get(bvid) ?: return
-        val next = (entry.offsetMs + deltaMs).coerceIn(-10_000L, 10_000L)
+        val next = entry.offsetMs + deltaMs
         LyricsStore.put(appContext, entry.copy(offsetMs = next))
         _state.update { it.copy(lyricsStatus = "歌词偏移 ${next / 1000.0}s") }
     }

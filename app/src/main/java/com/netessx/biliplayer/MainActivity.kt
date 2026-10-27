@@ -1228,9 +1228,10 @@ private fun PlayerScreen(
 @Composable
 private fun LyricsPreview(entry: LyricsEntry?, positionSec: Double, onClick: () -> Unit) {
     val lines = remember(entry?.bvid, entry?.synced, entry?.plain) { entry?.lines().orEmpty() }
-    // 偏移：正数让歌词延后出现
+    // 偏移：正数让歌词延后出现。
+    // 只有真正带时间轴的歌词才跟随播放；纯文本保持静止，不假装滚动。
     val pos = positionSec - (entry?.offsetMs ?: 0L) / 1000.0
-    val active = if (lines.isEmpty()) -1 else activeLineIndex(lines, pos)
+    val active = if (entry?.hasSyncedLines == true) activeLineIndex(lines, pos) else -1
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -1326,14 +1327,18 @@ private fun LyricsDialog(
                                 color = if (i == active) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,
-                                // 点某一行直接跳到该行的时间点（含当前偏移）
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onSeek(
-                                            (line.timeMs + (entry?.offsetMs ?: 0L)) / 1000.0
-                                        )
-                                    }
+                                // 同步歌词才允许点行跳转；纯文本没有时间点，点了也没意义
+                                modifier = if (entry?.hasSyncedLines == true) {
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onSeek(
+                                                (line.timeMs + (entry?.offsetMs ?: 0L)) / 1000.0
+                                            )
+                                        }
+                                } else {
+                                    Modifier.fillMaxWidth()
+                                }
                             )
                         }
                     }
@@ -1860,6 +1865,45 @@ private fun LogScreenPage(uiState: PlayerUiState, onBack: () -> Unit) {
 @Composable
 private fun SettingsScreen(uiState: PlayerUiState) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var backupMsg by remember { mutableStateOf<String?>(null) }
+
+    // 导出：用户自己选保存位置
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openOutputStream(uri)?.use {
+                        it.write(Backup.export(context).toByteArray())
+                    } != null
+                }.getOrDefault(false)
+            }
+            backupMsg = if (ok) "已导出偏好与歌词" else "导出失败"
+        }
+    }
+    // 导入：按 bvid 合并覆盖
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val text = context.contentResolver.openInputStream(uri)
+                        ?.bufferedReader()?.use { it.readText() }
+                        ?: return@runCatching null
+                    Backup.import(context, text)
+                }.getOrNull()
+            }
+            backupMsg = if (result != null)
+                "已导入 ${result.preferences} 条偏好、${result.lyrics} 条歌词"
+            else "导入失败：文件格式不支持"
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1982,6 +2026,31 @@ private fun SettingsScreen(uiState: PlayerUiState) {
                 "桌面上单指拖动改位置，双指捏合改字号",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        HorizontalDivider()
+
+        // ---------- 备份与恢复 ----------
+        Text("备份与恢复", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "导出/导入所有歌曲的单曲偏好（分P、开始秒、结束秒）与歌词缓存（含偏移），换机或重装时用。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { exportLauncher.launch(Backup.SUGGESTED_NAME) }) {
+                Text("导出")
+            }
+            OutlinedButton(onClick = {
+                importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+            }) { Text("导入") }
+        }
+        backupMsg?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
             )
         }
     }

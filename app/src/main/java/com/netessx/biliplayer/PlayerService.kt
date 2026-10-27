@@ -88,15 +88,18 @@ class PlayerService : Service() {
         LyricsOverlay.init(applicationContext)
         lyricsJob = scope.launch {
             PlayerController.state
-                .map { it.desktopLyrics to it.currentLyricLine }
+                .map {
+                    Triple(it.desktopLyrics, it.currentLyricLine, it.currentTitle)
+                }
                 .distinctUntilChanged()
-                .collect { (enabled, line) ->
+                .collect { (enabled, line, title) ->
                     if (!enabled || !LyricsOverlay.canDraw()) {
                         LyricsOverlay.hide()
                         return@collect
                     }
                     LyricsOverlay.show()
-                    LyricsOverlay.update(line)
+                    // 前奏/间奏还没有歌词行时，先显示视频标题
+                    LyricsOverlay.update(line.ifBlank { title })
                 }
         }
     }
@@ -153,7 +156,11 @@ class PlayerService : Service() {
                 MediaMetadata.METADATA_KEY_TITLE,
                 lyric.ifBlank { title.ifBlank { "BiliPlayer" } }
             )
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, title.ifBlank { "BiliPlayer" })
+            // 有歌词时副标题=视频名；没歌词时标题已经是视频名，副标题换成应用名避免重复
+            .putString(
+                MediaMetadata.METADATA_KEY_ARTIST,
+                if (lyric.isBlank()) "BiliPlayer" else title.ifBlank { "BiliPlayer" }
+            )
             .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, bvid)
             .putLong(MediaMetadata.METADATA_KEY_DURATION, (duration * 1000).toLong()) // 单位是毫秒
         if (art != null) {
@@ -268,9 +275,12 @@ class PlayerService : Service() {
         return builder
             .setSmallIcon(if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play)
             .setLargeIcon(lastArt)
-            // 灵动岛：标题位置放当前歌词，副标题位置放视频名
+            // 灵动岛：标题位置放当前歌词（前奏还没歌词时用视频名顶上），副标题位置放视频名
             .setContentTitle(lyric.ifBlank { title.ifBlank { "BiliPlayer" } })
-            .setContentText(title.ifBlank { "BiliPlayer · 后台播放中" })
+            .setContentText(
+                if (lyric.isBlank()) "BiliPlayer · 后台播放中"
+                else title.ifBlank { "BiliPlayer" }
+            )
             .setContentIntent(contentIntent)
             .setOngoing(true)
             .setVisibility(Notification.VISIBILITY_PUBLIC)

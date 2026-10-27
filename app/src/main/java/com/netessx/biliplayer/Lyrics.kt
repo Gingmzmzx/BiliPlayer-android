@@ -89,16 +89,29 @@ fun activeLineIndex(lines: List<LyricLine>, positionSec: Double): Int {
 object LrcLib {
 
     private const val TAG = "LrcLib"
-    private const val UA = "BiliPlayerAndroid/" + BuildConfig.VERSION_NAME +
-        " (https://apps.netessx.com/BiliPlayerAndroid)"
     private const val TIMEOUT_MS = 8_000
 
     /** 接口根地址，可在设置里改成自建镜像。 */
     private var baseUrl: String = Preferences.DEFAULT_LRCLIB_BASE
 
+    /** 每台设备/每次安装都不同的 User-Agent，初始化时算一次。 */
+    private var userAgent: String = "BiliPlayerAndroid/" + BuildConfig.VERSION_NAME
+
     fun init(context: Context) {
-        baseUrl = Preferences.lrcLibBaseUrl(context.applicationContext).trimEnd('/')
+        val ctx = context.applicationContext
+        baseUrl = Preferences.lrcLibBaseUrl(ctx).trimEnd('/')
+        userAgent = buildUserAgent(ctx)
     }
+
+    /**
+     * 每台设备不重复，但不含任何设备信息：
+     * 只有应用名/版本 + 一个本地随机生成的安装串 + 项目地址。
+     * 不读取型号、厂商、系统版本、分辨率，也不碰 IMEI / Android ID 等任何硬件或系统标识。
+     */
+    private fun buildUserAgent(ctx: Context): String =
+        "BiliPlayerAndroid/${BuildConfig.VERSION_NAME}" +
+            " (id/${Preferences.installId(ctx)})" +
+            " https://github.com/Gingmzmzx/BiliPlayer-android"
 
     /**
      * 按关键词搜索，带时间轴的条目排在前面。
@@ -145,7 +158,7 @@ object LrcLib {
                 connectTimeout = TIMEOUT_MS
                 readTimeout = TIMEOUT_MS
                 useCaches = false
-                setRequestProperty("User-Agent", UA)
+                setRequestProperty("User-Agent", userAgent)
                 setRequestProperty("Accept", "application/json")
             }
             if (conn.responseCode != HttpURLConnection.HTTP_OK) null
@@ -177,6 +190,17 @@ object LyricsStore {
     }
 
     fun get(bvid: String): LyricsEntry? = _entries.value[bvid]
+
+    /** 全部歌词（供导出）。 */
+    fun snapshot(): Map<String, LyricsEntry> = _entries.value
+
+    /** 合并导入的歌词（同 bvid 覆盖）。 */
+    fun merge(context: Context, entries: Map<String, LyricsEntry>) {
+        init(context)
+        if (entries.isEmpty()) return
+        _entries.value = _entries.value + entries
+        persist()
+    }
 
     private fun file(context: Context): File = File(context.filesDir, FILE_NAME)
 

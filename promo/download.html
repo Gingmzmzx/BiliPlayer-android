@@ -421,10 +421,10 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
     </div>
 
     <div class="ph ph-phone" style="margin-top:44px">
-      <img src="/media/images/f6c3b4a72467e6ae81be9cec9ad88005.png" alt="" onload="this.src&&this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
+      <img src="/media/images/a4c495c72b9dba9a3063bf030485f6b4.png" alt="" onload="this.src&&this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
       <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
         <div class="ph-icon">📱</div>
-        <div class="ph-name">/media/images/f6c3b4a72467e6ae81be9cec9ad88005.png</div>
+        <div class="ph-name">/media/images/a4c495c72b9dba9a3063bf030485f6b4.png</div>
         <div class="ph-desc">首页大图：播放器主界面（建议横屏 16:9，展示封面 + 控制区 + 播放列表）</div>
       </div>
     </div>
@@ -483,6 +483,21 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
         <div class="card-icon ter">🚫</div>
         <h3 class="t-title">失效视频自动剔除</h3>
         <p class="t-body on-surface-variant">遇到「视频不见了」自动跳过下一首，并从缓存里清掉，不再重复踩坑。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🎤</div>
+        <h3 class="t-title">歌词同步</h3>
+        <p class="t-body on-surface-variant">自动从 lrclib 匹配歌词，多版本任选，点一句直接跳转。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon sec">🖥️</div>
+        <h3 class="t-title">桌面歌词</h3>
+        <p class="t-body on-surface-variant">悬浮窗覆盖其他应用，可拖动缩放锁定；灵动岛同步显示。</p>
+      </div>
+      <div class="card">
+        <div class="card-icon ter">📊</div>
+        <h3 class="t-title">听歌统计</h3>
+        <p class="t-body on-surface-variant">按列表与歌曲统计实际收听时长，饼图看偏好。</p>
       </div>
     </div>
   </section>
@@ -621,10 +636,10 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
       <div class="feature-media">
         <div class="ph ph-phone">
-          <img src="/media/images/0ebca9563b8d7b3105739a7f667132d3.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
+          <img src="/media/images/dd9446fbe91330a80d2a54c415624c2b.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
           <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
             <div class="ph-icon">🎵</div>
-            <div class="ph-name">/media/images/0ebca9563b8d7b3105739a7f667132d3.png</div>
+            <div class="ph-name">/media/images/dd9446fbe91330a80d2a54c415624c2b.png</div>
             <div class="ph-desc">播放器主界面：封面、标题、进度条、控制按钮、音量、模式、定时</div>
           </div>
         </div>
@@ -645,10 +660,10 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       </div>
       <div class="feature-media">
         <div class="ph ph-phone">
-          <img src="/media/images/f6c3b4a72467e6ae81be9cec9ad88005.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
+          <img src="/media/images/a4c495c72b9dba9a3063bf030485f6b4.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
           <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
             <div class="ph-icon">🎬</div>
-            <div class="ph-name">/media/images/f6c3b4a72467e6ae81be9cec9ad88005.png</div>
+            <div class="ph-name">/media/images/a4c495c72b9dba9a3063bf030485f6b4.png</div>
             <div class="ph-desc">MV 画面：网页全屏后的视频（无控制条）</div>
           </div>
         </div>
@@ -741,6 +756,122 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
     </div>
 
   </section>
+
+    <!-- 10 歌词同步 -->
+    <div class="feature flip">
+      <div class="feature-body">
+        <h3 class="t-headline">歌词同步</h3>
+        <p class="t-body">播放时按视频标题猜出歌名，自动去 lrclib 找歌词。搜到多个版本会列出来，由你挑最合适的那一份。</p>
+        <ul class="feature-list">
+          <li>自动匹配，<strong>带时间轴的版本优先</strong></li>
+          <li>搜索失败可改歌名重搜，或直接粘贴自己的 LRC</li>
+          <li>点歌词任意一行，<strong>直接跳到那一句</strong></li>
+          <li>偏移微调：歌词快了就「延后」、慢了就「提前」，按曲目记住</li>
+        </ul>
+        <div class="chips">
+          <span class="chip assist">lrclib</span>
+          <span class="chip assist">多版本可选</span>
+          <span class="chip assist">点击跳转</span>
+        </div>
+      </div>
+      <div class="feature-media">
+        <div class="ph ph-phone">
+          <img src="/media/images/c970035fc9f963235cc194c6a9895402.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
+          <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+            <div class="ph-icon">🎤</div>
+            <div class="ph-name">c970035fc9f963235cc194c6a9895402.png</div>
+            <div class="ph-desc">歌词弹窗：候选版本列表 + 同步歌词 + 偏移微调</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 11 桌面歌词 & 灵动岛歌词 -->
+    <div class="feature">
+      <div class="feature-body">
+        <h3 class="t-headline">桌面歌词 & 灵动岛歌词</h3>
+        <p class="t-body">开启桌面歌词后，当前歌词直接浮在其他应用上层；灵动岛/媒体卡片的标题位也同步显示歌词。</p>
+        <ul class="feature-list">
+          <li>单指<strong>拖动</strong>改位置，双指<strong>捏合</strong>改字号</li>
+          <li><strong>锁定位置</strong>后不再拦截下层点击</li>
+          <li>前奏还没有歌词时，显示视频标题</li>
+          <li>标题=当前歌词，副标题=视频名</li>
+        </ul>
+        <div class="chips">
+          <span class="chip assist">悬浮窗</span>
+          <span class="chip assist">可拖动缩放</span>
+          <span class="chip assist">灵动岛同步</span>
+        </div>
+      </div>
+      <div class="feature-media">
+        <div class="ph ph-phone">
+          <img src="/media/images/a1928ef2242131ba1306f365ed10db08.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
+          <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+            <div class="ph-icon">🖥️</div>
+            <div class="ph-name">a1928ef2242131ba1306f365ed10db08.png</div>
+            <div class="ph-desc">桌面歌词悬浮窗：覆盖在其他应用之上显示当前歌词</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 12 听歌统计 -->
+    <div class="feature flip">
+      <div class="feature-body">
+        <h3 class="t-headline">听歌统计</h3>
+        <p class="t-body">每个列表听了多久、每首歌听了多久，都有记录；饼图一眼看出这段时间最常听哪几首。</p>
+        <ul class="feature-list">
+          <li>列表库直接显示<strong>累计听歌时长</strong></li>
+          <li>播放列表里每首歌标注已听时长</li>
+          <li>饼图 + 图例，按曲目占比展示</li>
+          <li>只统计实际播放，<strong>拖进度条不会虚增</strong></li>
+        </ul>
+        <div class="chips">
+          <span class="chip assist">时长统计</span>
+          <span class="chip assist">饼图</span>
+          <span class="chip assist">按曲目</span>
+        </div>
+      </div>
+      <div class="feature-media">
+        <div class="ph ph-phone">
+          <img src="/media/images/c6488f7e7bd50412c6bbb82ad63a645b.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
+          <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+            <div class="ph-icon">📊</div>
+            <div class="ph-name">c6488f7e7bd50412c6bbb82ad63a645b.png</div>
+            <div class="ph-desc">统计页：总时长 + 各列表切换 + 饼图</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 13 设置与备份 -->
+    <div class="feature">
+      <div class="feature-body">
+        <h3 class="t-headline">设置与备份</h3>
+        <p class="t-body">常用配置集中到设置页；单曲偏好和歌词可以整包导出，换机、重装都不用重配。</p>
+        <ul class="feature-list">
+          <li>可自定义 <strong>lrclib 接口地址</strong>（自建镜像）</li>
+          <li>桌面歌词的字号、锁定、位置复位</li>
+          <li>一键<strong>导出 / 导入</strong>单曲偏好与歌词</li>
+          <li>运行日志收进关于页，底部导航更清爽</li>
+        </ul>
+        <div class="chips">
+          <span class="chip assist">自定义接口</span>
+          <span class="chip assist">导入导出</span>
+          <span class="chip assist">换机迁移</span>
+        </div>
+      </div>
+      <div class="feature-media">
+        <div class="ph ph-phone">
+          <img src="/media/images/1bc32647bf37ce194e2bde63b134d43e.png" alt="" onload="this.naturalWidth&&(this.nextElementSibling.style.display='none')&&this.parentElement.classList.add('has-img')" onerror="this.style.display='none'">
+          <div class="ph-inner" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+            <div class="ph-icon">⚙️</div>
+            <div class="ph-name">1bc32647bf37ce194e2bde63b134d43e.png</div>
+            <div class="ph-desc">设置页：歌词来源、桌面歌词、备份与恢复</div>
+          </div>
+        </div>
+      </div>
+    </div>
 
   <!-- ========================= 播放模式 ========================= -->
   <section class="section">
@@ -844,6 +975,21 @@ hr.divider { border: 0; border-top: 1px solid var(--md-outline-variant); margin:
       <summary>显示画面后为什么点不动？</summary>
       <div class="faq-body">
         播放时为避免误触跳转，画面区域默认屏蔽触摸。使用应用内的控制区和系统通知即可操作播放。
+      </div>
+    </details>
+
+    <details class="faq">
+      <summary>歌词是从哪里来的？</summary>
+      <div class="faq-body">
+        歌词由第三方歌词库 lrclib.net 按其公开接口检索，本软件不生产也不审核。首次启动会弹出说明，需要你同意后才启用歌词功能；
+        也可以在设置页换成自建接口地址，或直接在歌词弹窗里粘贴自己的 LRC。
+      </div>
+    </details>
+
+    <details class="faq">
+      <summary>桌面歌词不显示怎么办？</summary>
+      <div class="faq-body">
+        需要授予「显示在其他应用上层」权限：设置页 → 桌面歌词 → 去授予悬浮窗权限。授权后回到设置页重新打开开关即可。
       </div>
     </details>
 

@@ -51,7 +51,7 @@ android {
         minSdk 24
         targetSdk 36
         versionCode buildStamp.toInteger()
-        versionName "1.6.0 Beta3"
+        versionName "1.6.1 Beta3"
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -78,6 +78,8 @@ dependencies {
     implementation libs.androidx.activity.compose
     implementation libs.androidx.compose.material3
     implementation "androidx.compose.material:material-icons-extended"
+    // 沉浸式页面的 Liquid Glass 背板模糊（Android 12+ 走 RenderEffect，旧版本自动退化为半透明底）
+    implementation libs.haze
     implementation libs.androidx.compose.ui
     implementation libs.androidx.compose.ui.graphics
     implementation libs.androidx.compose.ui.tooling.preview

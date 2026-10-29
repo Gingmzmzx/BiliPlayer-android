@@ -23,9 +23,17 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -93,6 +101,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -152,9 +161,26 @@ private enum class AppTab(val label: String, val icon: ImageVector) {
 /** 应用最外层页面：列表库 → 导入表单 → 播放器。 */
 private enum class AppScreen { LIBRARY, IMPORT, PLAYER }
 
+/** 沉浸模式下从播放页打开的二级页面（没有底部导航）。 */
+private enum class ImmersiveSub { STATS, SETTINGS, ABOUT }
+
 @Composable
 fun BiliPlayerApp() {
     val context = LocalContext.current
+    // 更新后首次启动：自动打开沉浸式界面，让用户看到新版 UI
+    val upgradedFromOldVersion = remember {
+        val last = Preferences.lastRunVersionCode(context)
+        val upgraded = last != 0 && last != BuildConfig.VERSION_CODE
+        if (last != BuildConfig.VERSION_CODE) {
+            Preferences.saveLastRunVersionCode(context, BuildConfig.VERSION_CODE)
+        }
+        upgraded
+    }
+    // 沉浸界面跟随系统明暗
+    val darkTheme = isSystemInDarkTheme()
+    LaunchedEffect(darkTheme) { setImmersiveDarkTheme(darkTheme) }
+    // 播放页与歌词浮层共用同一份背景捕获，浮层才能正确模糊底下的页面
+    val playerHaze = rememberLiquidGlassState()
     val uiState by PlayerController.state.collectAsState()
     val webView by PlayerController.webView.collectAsState()
     val library by PlaylistStore.playlists.collectAsState()
@@ -166,7 +192,26 @@ fun BiliPlayerApp() {
     var showLogin by remember { mutableStateOf(false) }
     var showLogs by remember { mutableStateOf(false) }
     // 实验性沉浸式播放页
-    var immersive by remember { mutableStateOf(false) }
+    var immersive by rememberSaveable { mutableStateOf(false) }
+    // 统一的沉浸式界面开关：播放器 / 统计 / 设置一起切换
+    var immersiveMode by remember {
+        mutableStateOf(
+            if (upgradedFromOldVersion) {
+                // 升级后首次启动强制体验新版沉浸界面
+                Preferences.saveImmersiveMode(context, true)
+                true
+            } else {
+                Preferences.immersiveMode(context)
+            }
+        )
+    }
+    // 沉浸模式下的二级页面（统计 / 设置 / 关于），null = 播放页
+    var immersiveSub by remember { mutableStateOf<ImmersiveSub?>(null) }
+    // 退场动画期间仍要渲染上一个页面，否则会闪白
+    var lastImmersiveSub by remember { mutableStateOf(ImmersiveSub.STATS) }
+    LaunchedEffect(immersiveSub) {
+        immersiveSub?.let { lastImmersiveSub = it }
+    }
     // 歌词弹窗由最外层托管：常规播放页和沉浸页都能打开同一个
     var showLyricsDialog by remember { mutableStateOf(false) }
     // 首次启动的歌词来源免责声明（同意过就不再出现）
@@ -181,6 +226,8 @@ fun BiliPlayerApp() {
     var deleteTarget by remember { mutableStateOf<Playlist?>(null) }
     val inMain = screen == AppScreen.PLAYER
 
+    // 不再隐藏系统栏：保留状态栏/导航栏，只让沉浸页的背景铺到它们下面
+
     // 更新 / 公告状态
     val scope = rememberCoroutineScope()
     var updateInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
@@ -190,6 +237,20 @@ fun BiliPlayerApp() {
     var downloadMessage by remember { mutableStateOf<String?>(null) }
     var checkingUpdate by remember { mutableStateOf(false) }
     var checkResult by remember { mutableStateOf<String?>(null) }
+    // 手动检查更新：Material 与沉浸式「关于」共用
+    val checkForUpdates: () -> Unit = {
+        if (!checkingUpdate) {
+            checkingUpdate = true
+            checkResult = null
+            scope.launch {
+                // 手动检查不看「忽略此版本」：请求过就一直反馈结果
+                val info = AppPublisher.checkUpdate(BuildConfig.VERSION_CODE)
+                checkingUpdate = false
+                if (info != null) updateInfo = info
+                else checkResult = "未发现新版本"
+            }
+        }
+    }
 
     // 申请通知权限（API 33+，用于前台服务通知）
     val notifPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -234,7 +295,7 @@ fun BiliPlayerApp() {
     LaunchedEffect(inMain) {
         if (inMain) {
             showWebView = Preferences.autoFullscreen(context)
-            if (Preferences.immersiveDefault(context)) immersive = true
+            if (immersiveMode) immersive = true
         }
     }
 
@@ -260,8 +321,9 @@ fun BiliPlayerApp() {
     }
 
     Scaffold(
-        // 沉浸页让背景铺满整屏（含状态栏/手势条），内容自己在内部避让系统栏
-        contentWindowInsets = if (immersive) WindowInsets(0, 0, 0, 0)
+        // 沉浸界面的背景要铺到状态栏/手势条下面（否则上下各露一条白边），
+        // 内容由各页面自己用 windowInsetsPadding 避让
+        contentWindowInsets = if (immersiveMode || immersive) WindowInsets(0, 0, 0, 0)
         else ScaffoldDefaults.contentWindowInsets,
         bottomBar = {
             // 沉浸页全屏，不要底部导航栏
@@ -286,19 +348,58 @@ fun BiliPlayerApp() {
     ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when {
-                showLogin -> LoginScreen(onBack = { showLogin = false })
-                showLogs -> LogScreenPage(uiState = uiState, onBack = { showLogs = false })
+                showLogin -> if (immersiveMode) {
+                    ImmersiveLoginScreen(onBack = { showLogin = false })
+                } else {
+                    LoginScreen(onBack = { showLogin = false })
+                }
+                showLogs -> if (immersiveMode) {
+                ImmersiveLogScreen(uiState = uiState, onBack = { showLogs = false })
+            } else {
+                LogScreenPage(uiState = uiState, onBack = { showLogs = false })
+            }
                 !inMain -> {
                     Column(Modifier.fillMaxSize()) {
                         Spacer(Modifier.height(if (showWebPanel) 240.dp else 0.dp))
                         Box(Modifier.weight(1f)) {
                             when (screen) {
-                                AppScreen.IMPORT -> SetupScreen(
+                                AppScreen.IMPORT -> if (immersiveMode) ImmersiveImportScreen(
+                                    uiState = uiState,
+                                    onLoginClick = { showLogin = true },
+                                    onStart = { uid, favName, autoFullscreen ->
+                                        PlayerController.init(context)
+                                        Preferences.saveIdentity(context, uid, favName)
+                                        Preferences.saveAutoFullscreen(context, autoFullscreen)
+                                        PlayerService.start(context)
+                                        PlayerController.importAndStart(uid, favName)
+                                    },
+                                    onBack = { screen = AppScreen.LIBRARY },
+                                ) else SetupScreen(
                                     uiState = uiState,
                                     onLoginClick = { showLogin = true },
                                     onBack = { screen = AppScreen.LIBRARY },
                                 )
-                                else -> LibraryScreen(
+                                else -> if (immersiveMode) ImmersiveLibraryScreen(
+                                    playlists = library,
+                                    uiState = uiState,
+                                    currentPlaylistId = uiState.currentPlaylistId,
+                                    stats = stats,
+                                    onImportClick = { screen = AppScreen.IMPORT },
+                                    onPlay = {
+                                        PlayerService.start(context)
+                                        PlayerController.playPlaylist(it)
+                                    },
+                                    onSync = { PlayerController.syncPlaylist(it.id) },
+                                    onRename = { pl, name -> PlaylistStore.rename(context, pl.id, name) },
+                                    onDelete = { pl ->
+                                        PlaylistStore.delete(context, pl.id)
+                                        PlaybackStats.removePlaylist(context, pl.id)
+                                        if (uiState.currentPlaylistId == pl.id) {
+                                            PlayerController.stop()
+                                            PlayerService.stop(context)
+                                        }
+                                    }
+                                ) else LibraryScreen(
                                     playlists = library,
                                     uiState = uiState,
                                     currentPlaylistId = uiState.currentPlaylistId,
@@ -328,16 +429,64 @@ fun BiliPlayerApp() {
                                 PlayerService.stop(context)
                                 screen = AppScreen.LIBRARY
                                 immersive = false
+                                immersiveSub = null
                             }
                             val openLyrics: () -> Unit = { showLyricsDialog = true }
                             if (immersive) {
-                                ImmersivePlayerScreen(
-                                    uiState = uiState,
-                                    lyricsEntry = lyrics[uiState.currentBvid],
-                                    onOpenLyrics = openLyrics,
-                                    onBack = goBack,
-                                    onExit = { immersive = false }
-                                )
+                                Box(Modifier.fillMaxSize()) {
+                                    ImmersivePlayerScreen(
+                                        uiState = uiState,
+                                        lyricsEntry = lyrics[uiState.currentBvid],
+                                        onOpenLyrics = openLyrics,
+                                        onOpenStats = { immersiveSub = ImmersiveSub.STATS },
+                                        onOpenSettings = { immersiveSub = ImmersiveSub.SETTINGS },
+                                        onOpenAbout = { immersiveSub = ImmersiveSub.ABOUT },
+                                        onBack = goBack,
+                                        // 沉浸模式是全局开关时，不提供"退出沉浸"
+                                        onExit = if (immersiveMode) null else ({ immersive = false }),
+                                        haze = playerHaze
+                                    )
+
+                                    // 二级页面：从右侧滑入，返回时滑回右侧
+                                    // 显式限定：外层 Column 有同名扩展，不限定会被解析成 ColumnScope 版本
+                                    androidx.compose.animation.AnimatedVisibility(
+                                        visible = immersiveSub != null,
+                                        enter = slideInHorizontally(
+                                            initialOffsetX = { it },
+                                            animationSpec = spring(dampingRatio = 0.9f, stiffness = 380f)
+                                        ) + fadeIn(),
+                                        exit = slideOutHorizontally(
+                                            targetOffsetX = { it },
+                                            animationSpec = tween(220)
+                                        ) + fadeOut(),
+                                        modifier = Modifier.fillMaxSize()
+                                    ) {
+                                        when (lastImmersiveSub) {
+                                            ImmersiveSub.STATS -> ImmersiveStatsScreen(
+                                                playlists = library,
+                                                stats = stats,
+                                                selectedId = statsSelectedId,
+                                                onSelect = { statsSelectedId = it },
+                                                onBack = { immersiveSub = null }
+                                            )
+                                            ImmersiveSub.SETTINGS -> ImmersiveSettingsScreen(
+                                                immersiveMode = immersiveMode,
+                                                onImmersiveModeChange = {
+                                                    immersiveMode = it
+                                                    Preferences.saveImmersiveMode(context, it)
+                                                },
+                                                onBack = { immersiveSub = null }
+                                            )
+                                            ImmersiveSub.ABOUT -> ImmersiveAboutScreen(
+                                                checking = checkingUpdate,
+                                                checkResult = checkResult,
+                                                onCheckUpdate = checkForUpdates,
+                                                onOpenLogs = { showLogs = true },
+                                                onBack = { immersiveSub = null }
+                                            )
+                                        }
+                                    }
+                                }
                             } else {
                                 PlayerScreen(
                                     uiState = uiState,
@@ -360,30 +509,44 @@ fun BiliPlayerApp() {
                             currentTab = AppTab.PLAYER
                         }
                     )
-                    AppTab.STATS -> StatsScreen(
-                        playlists = library,
-                        stats = stats,
-                        selectedId = statsSelectedId,
-                        onSelect = { statsSelectedId = it }
-                    )
-                    AppTab.SETTINGS -> SettingsScreen(uiState)
+                    AppTab.STATS -> if (immersiveMode) {
+                        ImmersiveStatsScreen(
+                            playlists = library,
+                            stats = stats,
+                            selectedId = statsSelectedId,
+                            onSelect = { statsSelectedId = it }
+                        )
+                    } else {
+                        StatsScreen(
+                            playlists = library,
+                            stats = stats,
+                            selectedId = statsSelectedId,
+                            onSelect = { statsSelectedId = it }
+                        )
+                    }
+                    AppTab.SETTINGS -> if (immersiveMode) {
+                        ImmersiveSettingsScreen(
+                            immersiveMode = immersiveMode,
+                            onImmersiveModeChange = {
+                                immersiveMode = it
+                                Preferences.saveImmersiveMode(context, it)
+                            }
+                        )
+                    } else {
+                        SettingsScreen(
+                            uiState = uiState,
+                            immersiveMode = immersiveMode,
+                            onImmersiveModeChange = {
+                                immersiveMode = it
+                                Preferences.saveImmersiveMode(context, it)
+                            }
+                        )
+                    }
                     AppTab.ABOUT -> AboutScreen(
                         checking = checkingUpdate,
                         checkResult = checkResult,
                         onOpenLogs = { showLogs = true },
-                        onCheckUpdate = {
-                            if (!checkingUpdate) {
-                                checkingUpdate = true
-                                checkResult = null
-                                scope.launch {
-                                    // 手动检查不看「忽略此版本」：请求过就一直反馈结果
-                                    val info = AppPublisher.checkUpdate(BuildConfig.VERSION_CODE)
-                                    checkingUpdate = false
-                                    if (info != null) updateInfo = info
-                                    else checkResult = "未发现新版本"
-                                }
-                            }
-                        }
+                        onCheckUpdate = checkForUpdates
                     )
                 }
                 }
@@ -427,85 +590,142 @@ fun BiliPlayerApp() {
         }
     }
 
+    // 沉浸式弹窗复用播放页背景；其他页面用玻璃自己的实心兜底
+    val dialogHaze = if (inMain && !showLogs) playerHaze else null
+
     // ---------- 更新弹窗 ----------
     updateInfo?.let { info ->
-        UpdateDialog(
-            info = info,
-            onLater = { updateInfo = null },
-            onIgnore = {
-                // 「忽略此版本」按 versionCode 记录
-                Preferences.saveIgnoredUpdateVersionCode(context, info.versionCode)
-                updateInfo = null
-            },
-            onDownload = {
-                updateInfo = null
-                downloading = true
-                downloadProgress = 0
-                downloadMessage = null
-                scope.launch {
-                    // AppPublisher 内部已 try-catch，失败返回 null
-                    val file = AppPublisher.downloadRelease(context, info) { p -> downloadProgress = p }
-                    downloading = false
-                    when {
-                        file == null -> downloadMessage = "下载失败或校验未通过，请稍后重试"
-                        AppPublisher.isApk(file) -> AppPublisher.installApk(context, file)
-                        else -> downloadMessage = "已下载到：${file.absolutePath}"
-                    }
+        val onLater: () -> Unit = { updateInfo = null }
+        val onIgnore: () -> Unit = {
+            // 「忽略此版本」按 versionCode 记录
+            Preferences.saveIgnoredUpdateVersionCode(context, info.versionCode)
+            updateInfo = null
+        }
+        val onDownload: () -> Unit = {
+            updateInfo = null
+            downloading = true
+            downloadProgress = 0
+            downloadMessage = null
+            scope.launch {
+                // AppPublisher 内部已 try-catch，失败返回 null
+                val file = AppPublisher.downloadRelease(context, info) { p -> downloadProgress = p }
+                downloading = false
+                when {
+                    file == null -> downloadMessage = "下载失败或校验未通过，请稍后重试"
+                    AppPublisher.isApk(file) -> AppPublisher.installApk(context, file)
+                    else -> downloadMessage = "已下载到：${file.absolutePath}"
                 }
             }
-        )
+        }
+
+        if (immersiveMode) {
+            ImmersiveUpdateDialog(
+                info = info,
+                onLater = onLater,
+                onIgnore = onIgnore,
+                onDownload = onDownload,
+                haze = dialogHaze
+            )
+        } else {
+            UpdateDialog(
+                info = info,
+                onLater = onLater,
+                onIgnore = onIgnore,
+                onDownload = onDownload
+            )
+        }
     }
 
     // ---------- 公告弹窗（等更新弹窗关掉再显示，避免叠在一起）----------
     if (updateInfo == null) {
         noticeInfo?.let { n ->
-            NoticeDialog(
-                info = n,
-                onDismiss = {
-                    // 看完才记录已读
-                    Preferences.saveLastSeenNoticeId(context, n.id)
-                    noticeInfo = null
-                }
-            )
+            val onDismissNotice: () -> Unit = {
+                // 看完才记录已读
+                Preferences.saveLastSeenNoticeId(context, n.id)
+                noticeInfo = null
+            }
+            if (immersiveMode) {
+                ImmersiveNoticeDialog(
+                    info = n,
+                    onDismiss = onDismissNotice,
+                    haze = dialogHaze
+                )
+            } else {
+                NoticeDialog(info = n, onDismiss = onDismissNotice)
+            }
         }
     }
 
     if (downloading) {
-        DownloadDialog(progress = downloadProgress)
+        if (immersiveMode) {
+            ImmersiveDownloadDialog(progress = downloadProgress, haze = dialogHaze)
+        } else {
+            DownloadDialog(progress = downloadProgress)
+        }
     }
 
     downloadMessage?.let { msg ->
-        AlertDialog(
-            onDismissRequest = { downloadMessage = null },
-            title = { Text("提示") },
-            text = { Text(msg) },
-            confirmButton = { TextButton(onClick = { downloadMessage = null }) { Text("知道了") } }
-        )
+        if (immersiveMode) {
+            ImmersiveNoticeDialog(
+                info = NoticeInfo(title = "提示", content = msg),
+                onDismiss = { downloadMessage = null },
+                haze = dialogHaze
+            )
+        } else {
+            AlertDialog(
+                onDismissRequest = { downloadMessage = null },
+                title = { Text("提示") },
+                text = { Text(msg) },
+                confirmButton = { TextButton(onClick = { downloadMessage = null }) { Text("知道了") } }
+            )
+        }
     }
 
     // ---------- 歌词弹窗 ----------
     if (showLyricsDialog) {
-        LyricsDialog(
-            uiState = uiState,
-            entry = lyrics[uiState.currentBvid],
-            onSearch = { q -> PlayerController.searchLyricsForCurrent(q) },
-            onApply = { i -> PlayerController.applyLyricsResult(i) },
-            onSave = { t -> PlayerController.saveLyricsForCurrent(t) },
-            onSeek = { sec -> PlayerController.seek(sec) },
-            onDismiss = { showLyricsDialog = false }
-        )
+        if (immersive) {
+            ImmersiveLyricsDialog(
+                uiState = uiState,
+                entry = lyrics[uiState.currentBvid],
+                onSearch = { q -> PlayerController.searchLyricsForCurrent(q) },
+                onApply = { i -> PlayerController.applyLyricsResult(i) },
+                onSave = { t -> PlayerController.saveLyricsForCurrent(t) },
+                onSeek = { sec -> PlayerController.seek(sec) },
+                onDismiss = { showLyricsDialog = false },
+                haze = playerHaze
+            )
+        } else {
+            LyricsDialog(
+                uiState = uiState,
+                entry = lyrics[uiState.currentBvid],
+                onSearch = { q -> PlayerController.searchLyricsForCurrent(q) },
+                onApply = { i -> PlayerController.applyLyricsResult(i) },
+                onSave = { t -> PlayerController.saveLyricsForCurrent(t) },
+                onSeek = { sec -> PlayerController.seek(sec) },
+                onDismiss = { showLyricsDialog = false }
+            )
+        }
     }
 
     // ---------- 歌词来源免责声明（首次启动） ----------
     if (showLyricsDisclaimer) {
-        LyricsDisclaimerDialog(
-            onAgree = {
-                Preferences.saveLyricsDisclaimerAccepted(context, true)
-                showLyricsDisclaimer = false
-            },
-            // 不同意就不用这个应用：直接退出
-            onDisagree = { context.findActivity()?.finish() }
-        )
+        val agree: () -> Unit = {
+            Preferences.saveLyricsDisclaimerAccepted(context, true)
+            showLyricsDisclaimer = false
+        }
+        // 不同意就不用这个应用：直接退出
+        val disagree: () -> Unit = { context.findActivity()?.finish() }
+        if (immersiveMode) {
+            ImmersiveLyricsDisclaimerDialog(
+                onAgree = agree,
+                onDisagree = disagree
+            )
+        } else {
+            LyricsDisclaimerDialog(
+                onAgree = agree,
+                onDisagree = disagree
+            )
+        }
     }
 
     // ---------- 播放列表库：重命名 / 删除 ----------
@@ -1608,11 +1828,7 @@ private val STATS_COLORS = listOf(
 )
 
 /**
- * 听歌统计弹窗：总时长 + 饼图 + 图例。
- * 显示时长最多的前 7 首，其余合并成「其他」，避免图例过长。
- */
-/**
- * 听歌统计页（底部导航「统计」）。
+ * 听歌统计页（经典 Material 版）。
  * 顶部是跨列表总时长，下面可以切换列表看各自的饼图。
  */
 @Composable
@@ -1682,23 +1898,19 @@ private fun StatsScreen(
         Spacer(Modifier.height(16.dp))
 
         selected?.let { pl ->
-            StatsContent(
-                tracks = pl.tracks,
-                perTrack = stats[pl.id].orEmpty()
-            )
+            StatsContent(tracks = pl.tracks, perTrack = stats[pl.id].orEmpty())
         }
     }
 }
 
-/** 饼图 + 图例。显示时长最多的前 7 首，其余合并成「其他」。 */
+/** 饼图 + 图例。每首歌一个扇区，不做「其他」合并。 */
 @Composable
 private fun StatsContent(
     tracks: List<BiliTrack>,
     perTrack: Map<String, Long>,
     modifier: Modifier = Modifier,
 ) {
-    // 按 bvid 去重：同一个视频在收藏夹里出现两次时只算一份，
-    // 否则饼图会出现两条同名扇区，百分比还会超过 100%
+    // 按 bvid 去重：同一个视频出现两次时只算一份
     val sorted = tracks
         .distinctBy { it.bvid }
         .map { it to (perTrack[it.bvid] ?: 0L) }
@@ -1707,7 +1919,6 @@ private fun StatsContent(
 
     data class Slice(val label: String, val seconds: Long, val color: Color)
 
-    // 不做「其他」合并：每一首都单独列出，色板循环使用
     val slices: List<Slice> = sorted.mapIndexed { i, (t, sec) ->
         Slice(t.title.ifBlank { t.bvid }, sec, STATS_COLORS[i % STATS_COLORS.size])
     }
@@ -1897,7 +2108,11 @@ private fun LogScreenPage(uiState: PlayerUiState, onBack: () -> Unit) {
  * 歌词的搜索/挑选放在播放器的歌词弹窗里，这里只放"长期生效"的配置。
  */
 @Composable
-private fun SettingsScreen(uiState: PlayerUiState) {
+private fun SettingsScreen(
+    uiState: PlayerUiState,
+    immersiveMode: Boolean,
+    onImmersiveModeChange: (Boolean) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var backupMsg by remember { mutableStateOf<String?>(null) }
@@ -1949,22 +2164,18 @@ private fun SettingsScreen(uiState: PlayerUiState) {
 
         // ---------- 界面 ----------
         Text("界面", style = MaterialTheme.typography.titleMedium)
-        var immersiveDefault by remember { mutableStateOf(Preferences.immersiveDefault(context)) }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("默认进入沉浸模式", style = MaterialTheme.typography.titleSmall)
+                Text("沉浸式界面", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    "开始播放时直接进入沉浸式播放页，而不是常规播放器",
+                    "播放器、统计、设置全部切换为无 Material 的沉浸版界面；关闭则用经典界面",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Switch(
-                checked = immersiveDefault,
-                onCheckedChange = {
-                    immersiveDefault = it
-                    Preferences.saveImmersiveDefault(context, it)
-                }
+                checked = immersiveMode,
+                onCheckedChange = onImmersiveModeChange
             )
         }
 

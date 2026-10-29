@@ -597,6 +597,13 @@ object PlayerController {
     }
 
     private fun appendLog(msg: String) {
-        _state.update { it.copy(logLines = (it.logLines + msg).takeLast(200)) }
+        // 每行带日期时间，导出后也能直接定位问题发生时间
+        val stamp = java.text.SimpleDateFormat(
+            "MM-dd HH:mm:ss",
+            java.util.Locale.getDefault()
+        ).format(java.util.Date())
+        _state.update {
+            it.copy(logLines = (it.logLines + "[$stamp] $msg").takeLast(200))
+        }
     }
 }

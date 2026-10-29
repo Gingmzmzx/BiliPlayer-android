@@ -23,7 +23,8 @@ object Preferences {
     private const val KEY_LRCLIB_BASE = "lrclib_base_url"
     private const val KEY_LYRICS_DISCLAIMER = "lyrics_disclaimer_accepted"
     private const val KEY_INSTALL_ID = "install_id"
-    private const val KEY_IMMERSIVE_DEFAULT = "immersive_default"
+    private const val KEY_IMMERSIVE_MODE = "immersive_mode"
+    private const val KEY_LAST_RUN_VERSION_CODE = "last_run_version_code"
 
     const val DEFAULT_LRCLIB_BASE = "https://lrclib.net/api"
 
@@ -67,11 +68,18 @@ object Preferences {
         sp(context).edit().putLong(KEY_LAST_NOTICE_ID, id).apply()
     }
 
-    // ----- 默认进入沉浸式播放页 -----
-    fun immersiveDefault(context: Context): Boolean =
-        sp(context).getBoolean(KEY_IMMERSIVE_DEFAULT, false)
-    fun saveImmersiveDefault(context: Context, enabled: Boolean) {
-        sp(context).edit().putBoolean(KEY_IMMERSIVE_DEFAULT, enabled).apply()
+    // ----- 统一的沉浸式界面开关（播放器 / 统计 / 设置都用沉浸版） -----
+    fun immersiveMode(context: Context): Boolean =
+        sp(context).getBoolean(KEY_IMMERSIVE_MODE, true)
+    fun saveImmersiveMode(context: Context, enabled: Boolean) {
+        sp(context).edit().putBoolean(KEY_IMMERSIVE_MODE, enabled).apply()
+    }
+
+    // ----- 上次运行的 versionCode：用于升级后首次启动做迁移 -----
+    fun lastRunVersionCode(context: Context): Int =
+        sp(context).getInt(KEY_LAST_RUN_VERSION_CODE, 0)
+    fun saveLastRunVersionCode(context: Context, versionCode: Int) {
+        sp(context).edit().putInt(KEY_LAST_RUN_VERSION_CODE, versionCode).apply()
     }
 
     // ----- 桌面歌词（悬浮窗） -----

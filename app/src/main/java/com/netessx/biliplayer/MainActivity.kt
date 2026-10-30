@@ -187,6 +187,7 @@ fun BiliPlayerApp() {
     val stats by PlaybackStats.stats.collectAsState()
     val lyrics by LyricsStore.entries.collectAsState()
     var screen by remember { mutableStateOf(AppScreen.LIBRARY) }
+    var importing by remember { mutableStateOf(false) }
     var showWebView by remember { mutableStateOf(Preferences.autoFullscreen(context)) }
     var currentTab by remember { mutableStateOf(AppTab.PLAYER) }
     var showLogin by remember { mutableStateOf(false) }
@@ -294,7 +295,24 @@ fun BiliPlayerApp() {
     // 有列表开始播放（导入完成或点了库里的某一项）就进播放器
     LaunchedEffect(uiState.currentPlaylistId) {
         if (uiState.currentPlaylistId.isNotEmpty() && uiState.playlist.isNotEmpty() && !miniPlayer) {
+            importing = false
             screen = AppScreen.PLAYER
+        }
+    }
+
+    // 从收藏夹导入成功后自动离开导入页并进入播放器（即使之前处于迷你播放状态）
+    LaunchedEffect(importing, uiState.isFetching, uiState.currentPlaylistId) {
+        if (importing &&
+            !uiState.isFetching &&
+            uiState.currentPlaylistId.isNotEmpty() &&
+            uiState.playlist.isNotEmpty()
+        ) {
+            // 无论当前是否已被上面的 effect 切到播放器，都必须清掉标记
+            importing = false
+            if (screen == AppScreen.IMPORT) {
+                miniPlayer = false
+                screen = AppScreen.PLAYER
+            }
         }
     }
 
@@ -383,10 +401,15 @@ fun BiliPlayerApp() {
                                         PlayerController.init(context)
                                         Preferences.saveIdentity(context, uid, favName)
                                         Preferences.saveAutoFullscreen(context, autoFullscreen)
+                                        importing = true
+                                        miniPlayer = false
                                         PlayerService.start(context)
                                         PlayerController.importAndStart(uid, favName)
                                     },
-                                    onBack = { screen = AppScreen.LIBRARY },
+                                    onBack = {
+                                        importing = false
+                                        screen = AppScreen.LIBRARY
+                                    },
                                 ) else SetupScreen(
                                     uiState = uiState,
                                     onLoginClick = { showLogin = true },
@@ -409,10 +432,18 @@ fun BiliPlayerApp() {
                                     onCheckUpdate = checkForUpdates,
                                     onOpenLogs = { showLogs = true },
                                     onImportClick = { screen = AppScreen.IMPORT },
-                                    onPlay = {
-                                        miniPlayer = false
-                                        PlayerService.start(context)
-                                        PlayerController.playPlaylist(it)
+                                    onPlay = { pl ->
+                                        if (pl.id == uiState.currentPlaylistId &&
+                                            uiState.currentBvid.isNotBlank()
+                                        ) {
+                                            // 点的就是正在播放的列表：展开播放页，不重起、不隐藏迷你条
+                                            miniPlayer = false
+                                            screen = AppScreen.PLAYER
+                                        } else {
+                                            miniPlayer = false
+                                            PlayerService.start(context)
+                                            PlayerController.playPlaylist(pl)
+                                        }
                                     },
                                     onSync = { PlayerController.syncPlaylist(it.id) },
                                     onRename = { pl, name -> PlaylistStore.rename(context, pl.id, name) },
@@ -425,6 +456,7 @@ fun BiliPlayerApp() {
                                             miniPlayer = false
                                         }
                                     },
+                                    onLoginClick = { showLogin = true },
                                     selectedTabIndex = immersiveTab,
                                     onTabSelected = { immersiveTab = it },
                                     showMiniPlayer = miniPlayer &&
@@ -441,7 +473,8 @@ fun BiliPlayerApp() {
                                                 screen = AppScreen.PLAYER
                                             }
                                         }
-                                    }
+                                    },
+                                    onTrackStarted = { miniPlayer = true }
                                 ) else LibraryScreen(
                                     playlists = library,
                                     uiState = uiState,
@@ -2171,7 +2204,7 @@ private fun SettingsScreen(
                     } != null
                 }.getOrDefault(false)
             }
-            backupMsg = if (ok) "已导出偏好与歌词" else "导出失败"
+            backupMsg = if (ok) "已导出偏好、歌单与歌词" else "导出失败"
         }
     }
     // 导入：按 bvid 合并覆盖
@@ -2189,7 +2222,7 @@ private fun SettingsScreen(
                 }.getOrNull()
             }
             backupMsg = if (result != null)
-                "已导入 ${result.preferences} 条偏好、${result.lyrics} 条歌词"
+                "已导入 ${result.preferences} 条偏好、${result.lyrics} 条歌词、${result.playlists} 个歌单"
             else "导入失败：文件格式不支持"
         }
     }

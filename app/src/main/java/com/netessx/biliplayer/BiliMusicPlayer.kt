@@ -113,6 +113,22 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         loadCurrent()
     }
 
+    /** 追加到当前内存队列，不写回本地歌单。 */
+    fun appendTrack(track: BiliTrack): Boolean {
+        if (track.bvid.isBlank()) return false
+        if (playlist.any { it.bvid == track.bvid }) return false
+        playlist = playlist + track
+        emit()
+        return true
+    }
+
+    /** 临时追加到当前内存队列；不写回本地歌单。 */
+    fun addToQueue(track: BiliTrack): Boolean {
+        val ok = appendTrack(track)
+        if (ok) log("已临时加入播放队列：${track.title.ifBlank { track.bvid }}")
+        return ok
+    }
+
     fun next() {
         pendingNext = true
     }

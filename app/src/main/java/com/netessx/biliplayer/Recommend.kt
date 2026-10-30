@@ -56,7 +56,6 @@ data class RecommendState(
 
 object RecommendStore {
 
-    private const val LISTS_URL = "https://space.bilibili.com/3493093607213343/lists"
     private const val MAX_PAGES = 40
     private const val FEATURED_TITLE = "私人致享2.0"
 
@@ -67,6 +66,7 @@ object RecommendStore {
     private var appContext: Context? = null
     private var host: ViewGroup? = null
     private var browser: HeadlessBrowser? = null
+    private var listsUrl: String = Preferences.DEFAULT_RECOMMEND_SOURCE
 
     private var listRunId = 0
     private var listPage = 1
@@ -81,6 +81,16 @@ object RecommendStore {
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        listsUrl = Preferences.recommendSource(context)
+    }
+
+    /** 修改来源后立即重新抓取。 */
+    fun updateSource(context: Context, source: String) {
+        val normalized = Preferences.normalizeRecommendSource(source)
+        Preferences.saveRecommendSource(context, normalized)
+        init(context)
+        _state.value = RecommendState()
+        refresh(host)
     }
 
     fun ensureLoaded(hostView: ViewGroup? = null) {
@@ -99,7 +109,7 @@ object RecommendStore {
         listAwaitingPage = true
         _state.value = RecommendState(loading = true, progress = "正在打开合集页…")
 
-        b.load(LISTS_URL)
+        b.load(listsUrl)
         scope.launch {
             delay(60000)
             if (id == listRunId && _state.value.loading) {
@@ -131,7 +141,7 @@ object RecommendStore {
                 )
             )
         }
-        b.load(LISTS_URL)
+        b.load(listsUrl)
         scope.launch {
             delay(60000)
             if (id == detailRunId && _state.value.detail?.loading == true) {
@@ -466,7 +476,7 @@ object RecommendStore {
                     cover = normalizeUrl(o.optString("cover")),
                     count = o.optInt("count"),
                     type = o.optString("type").ifBlank { "合集" },
-                    url = o.optString("url").ifBlank { LISTS_URL },
+                    url = o.optString("url").ifBlank { listsUrl },
                     videos = parseVideoArray(o.optJSONArray("videos"))
                 )
             }

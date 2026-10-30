@@ -1,6 +1,7 @@
 package com.netessx.biliplayer
 
 import android.content.Context
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -14,7 +15,7 @@ object Backup {
 
     const val SUGGESTED_NAME = "biliplayer-backup.json"
 
-    data class ImportResult(val preferences: Int, val lyrics: Int)
+    data class ImportResult(val preferences: Int, val lyrics: Int, val playlists: Int)
 
     /** org.json 会把 JSON null 读成字符串 "null"，这里统一洗净。 */
     private fun JSONObject.text(key: String): String {
@@ -44,6 +45,29 @@ object Backup {
             )
         }
         root.put("lyrics", lyrics)
+
+        val playlists = JSONArray()
+        PlaylistStore.playlists.value.forEach { pl ->
+            val tracks = JSONArray()
+            pl.tracks.forEach { t ->
+                tracks.put(
+                    JSONObject()
+                        .put("bvid", t.bvid)
+                        .put("title", t.title)
+                        .put("cover", t.cover)
+                )
+            }
+            playlists.put(
+                JSONObject()
+                    .put("id", pl.id)
+                    .put("name", pl.name)
+                    .put("uid", pl.uid)
+                    .put("favName", pl.favName)
+                    .put("updatedAt", pl.updatedAt)
+                    .put("tracks", tracks)
+            )
+        }
+        root.put("playlists", playlists)
         return root.toString(2)
     }
 
@@ -73,6 +97,42 @@ object Backup {
         }
         LyricsStore.merge(context, entries)
 
-        return ImportResult(prefCount, entries.size)
+        val importedPlaylists = mutableListOf<Playlist>()
+        val playlistsArr = root.optJSONArray("playlists")
+        if (playlistsArr != null) {
+            for (i in 0 until playlistsArr.length()) {
+                val o = playlistsArr.optJSONObject(i) ?: continue
+                val tracksArr = o.optJSONArray("tracks")
+                val tracks = mutableListOf<BiliTrack>()
+                if (tracksArr != null) {
+                    for (j in 0 until tracksArr.length()) {
+                        val t = tracksArr.optJSONObject(j) ?: continue
+                        val bvid = t.optString("bvid")
+                        if (bvid.isBlank()) continue
+                        tracks.add(
+                            BiliTrack(
+                                bvid = bvid,
+                                title = t.optString("title"),
+                                cover = t.optString("cover")
+                            )
+                        )
+                    }
+                }
+                val id = o.optString("id").ifBlank { java.util.UUID.randomUUID().toString() }
+                importedPlaylists.add(
+                    Playlist(
+                        id = id,
+                        name = o.optString("name").ifBlank { "导入歌单" },
+                        uid = o.optString("uid"),
+                        favName = o.optString("favName"),
+                        tracks = tracks,
+                        updatedAt = o.optLong("updatedAt", 0L)
+                    )
+                )
+            }
+        }
+        val playlistCount = PlaylistStore.mergeImported(context, importedPlaylists)
+
+        return ImportResult(prefCount, entries.size, playlistCount)
     }
 }

@@ -204,7 +204,9 @@ internal fun GlassBottomSheet(
                     .liquidGlass(
                         shape = RoundedCornerShape(30.dp),
                         blurRadius = 32.dp,
-                        elevation = 20.dp
+                        elevation = 20.dp,
+                        // 抽屉内容密，稍微提高不透明度避免背景太乱
+                        tintAlpha = 1.65f
                     )
             ) {
                 // 拖动区：整条顶部都可以拖
@@ -309,7 +311,8 @@ internal fun GlassSideDrawer(
                     .liquidGlass(
                         shape = RoundedCornerShape(30.dp),
                         blurRadius = 30.dp,
-                        elevation = 18.dp
+                        elevation = 18.dp,
+                        tintAlpha = 1.6f
                     )
                     .windowInsetsPadding(WindowInsets.systemBars)
                     .padding(vertical = 8.dp)
@@ -378,7 +381,8 @@ internal fun GlassSidePanel(
                     .liquidGlass(
                         shape = RoundedCornerShape(28.dp),
                         blurRadius = 28.dp,
-                        elevation = 16.dp
+                        elevation = 16.dp,
+                        tintAlpha = 1.6f
                     )
             ) {
                 content()

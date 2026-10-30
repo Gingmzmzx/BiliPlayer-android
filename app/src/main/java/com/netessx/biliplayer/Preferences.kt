@@ -25,8 +25,12 @@ object Preferences {
     private const val KEY_INSTALL_ID = "install_id"
     private const val KEY_IMMERSIVE_MODE = "immersive_mode"
     private const val KEY_LAST_RUN_VERSION_CODE = "last_run_version_code"
+    private const val KEY_RECOMMEND_SOURCE = "recommend_source"
 
     const val DEFAULT_LRCLIB_BASE = "https://lrclib.net/api"
+    const val DEFAULT_RECOMMEND_UID = "3493093607213343"
+    const val DEFAULT_RECOMMEND_SOURCE =
+        "https://space.bilibili.com/$DEFAULT_RECOMMEND_UID/lists"
 
     private fun sp(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -73,6 +77,35 @@ object Preferences {
         sp(context).getBoolean(KEY_IMMERSIVE_MODE, true)
     fun saveImmersiveMode(context: Context, enabled: Boolean) {
         sp(context).edit().putBoolean(KEY_IMMERSIVE_MODE, enabled).apply()
+    }
+
+    // ----- 推荐页来源（可填 UID 或空间合集页 URL） -----
+    fun recommendSource(context: Context): String =
+        sp(context).getString(KEY_RECOMMEND_SOURCE, DEFAULT_RECOMMEND_SOURCE)
+            ?.takeIf { it.isNotBlank() } ?: DEFAULT_RECOMMEND_SOURCE
+
+    fun saveRecommendSource(context: Context, source: String) {
+        sp(context).edit().putString(KEY_RECOMMEND_SOURCE, source).apply()
+    }
+
+    /** 从已保存的来源里取出 UID，供设置页只显示 UID。 */
+    fun recommendSourceUid(context: Context): String {
+        val raw = recommendSource(context)
+        val fromUrl = Regex("""space\.bilibili\.com/(\d+)""")
+            .find(raw)?.groupValues?.getOrNull(1)
+        if (!fromUrl.isNullOrBlank()) return fromUrl
+        val digits = raw.filter(Char::isDigit)
+        return digits.ifBlank { DEFAULT_RECOMMEND_UID }
+    }
+
+    fun normalizeRecommendSource(input: String): String {
+        val raw = input.trim()
+        if (raw.isBlank()) return DEFAULT_RECOMMEND_SOURCE
+        if (raw.all { it.isDigit() }) {
+            return "https://space.bilibili.com/$raw/lists"
+        }
+        if (raw.startsWith("http://") || raw.startsWith("https://")) return raw
+        return "https://$raw"
     }
 
     // ----- 上次运行的 versionCode：用于升级后首次启动做迁移 -----

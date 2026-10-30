@@ -16,6 +16,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalView
 import kotlinx.coroutines.launch
 import android.graphics.Bitmap
@@ -162,6 +163,7 @@ fun ImmersivePlayerScreen(
     var showPlaylist by remember { mutableStateOf(false) }
     var showVolume by remember { mutableStateOf(false) }
     var prefIndex by remember { mutableStateOf<Int?>(null) }
+    var addSheetTrack by remember { mutableStateOf<BiliTrack?>(null) }
     val lines = remember(lyricsEntry?.bvid, lyricsEntry?.synced, lyricsEntry?.plain) {
         lyricsEntry?.lines().orEmpty()
     }
@@ -274,7 +276,16 @@ fun ImmersivePlayerScreen(
                             onLyricsClick = onOpenLyrics,
                             onTimerClick = { showTimerPanel = true },
                             onPlaylistClick = { showPlaylist = true },
-                            onVolumeClick = { showVolume = true }
+                            onVolumeClick = { showVolume = true },
+                            onAddClick = {
+                                if (uiState.currentBvid.isNotBlank()) {
+                                    addSheetTrack = BiliTrack(
+                                        bvid = uiState.currentBvid,
+                                        title = uiState.currentTitle,
+                                        cover = uiState.currentCover
+                                    )
+                                }
+                            }
                         )
                     }
                     LyricsPane(
@@ -335,7 +346,16 @@ fun ImmersivePlayerScreen(
                     onLyricsClick = onOpenLyrics,
                     onTimerClick = { showTimerPanel = true },
                     onPlaylistClick = { showPlaylist = true },
-                    onVolumeClick = { showVolume = true }
+                    onVolumeClick = { showVolume = true },
+                    onAddClick = {
+                        if (uiState.currentBvid.isNotBlank()) {
+                            addSheetTrack = BiliTrack(
+                                bvid = uiState.currentBvid,
+                                title = uiState.currentTitle,
+                                cover = uiState.currentCover
+                            )
+                        }
+                    }
                 )
             }
         }
@@ -378,6 +398,10 @@ fun ImmersivePlayerScreen(
             ) {
                 VolumePanel(volume = uiState.volume) { PlayerController.setVolume(it) }
             }
+        }
+
+        addSheetTrack?.let { track ->
+            AddToPlaylistSheet(track = track, onDismiss = { addSheetTrack = null })
         }
 
         // 单曲偏好浮层（覆盖在抽屉之上）
@@ -964,13 +988,28 @@ private fun TimerPanel(
     }
 }
 
+private object CoverImageCache {
+    private val cache = object : android.util.LruCache<String, ImageBitmap>(64 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: ImageBitmap): Int =
+            value.width * value.height * 4
+    }
+
+    fun get(url: String): ImageBitmap? = cache.get(url)
+
+    fun put(url: String, bitmap: ImageBitmap) {
+        cache.put(url, bitmap)
+    }
+}
+
 /** 加载封面并绘制；失败/为空时保持透明，让渐变层兜底。 */
 @Composable
 internal fun CoverBitmap(url: String, modifier: Modifier) {
-    var bitmap by remember(url) { mutableStateOf<ImageBitmap?>(null) }
+    var bitmap by remember(url) {
+        mutableStateOf(url.takeIf { it.isNotBlank() }?.let(CoverImageCache::get))
+    }
     LaunchedEffect(url) {
-        if (url.isBlank()) return@LaunchedEffect
-        bitmap = withContext(Dispatchers.IO) {
+        if (url.isBlank() || bitmap != null) return@LaunchedEffect
+        val loaded = withContext(Dispatchers.IO) {
             runCatching {
                 val conn = URL(url).openConnection() as HttpURLConnection
                 conn.connectTimeout = 5000
@@ -982,6 +1021,8 @@ internal fun CoverBitmap(url: String, modifier: Modifier) {
                 bmp?.asImageBitmap()
             }.getOrNull()
         }
+        if (loaded != null) CoverImageCache.put(url, loaded)
+        bitmap = loaded
     }
     bitmap?.let {
         Image(
@@ -1001,6 +1042,7 @@ private fun FloatingControls(
     onTimerClick: () -> Unit,
     onPlaylistClick: () -> Unit,
     onVolumeClick: () -> Unit,
+    onAddClick: () -> Unit,
 ) {
     val duration = if (uiState.duration > 0) uiState.duration else 1.0
     var scrubbing by remember { mutableStateOf(false) }
@@ -1037,6 +1079,17 @@ private fun FloatingControls(
             LiquidCircleButton(size = 34.dp, onClick = onVolumeClick) {
                 val iconColor = TextPrimary
                 Canvas(Modifier.size(16.dp)) { drawSpeakerIcon(iconColor, uiState.volume) }
+            }
+            Spacer(Modifier.width(6.dp))
+            LiquidCircleButton(size = 34.dp, onClick = onAddClick) {
+                val iconColor = TextPrimary
+                Canvas(Modifier.size(14.dp)) {
+                    val w = size.width
+                    val h = size.height
+                    val stroke = 1.9.dp.toPx()
+                    drawLine(iconColor, Offset(w / 2f, 0f), Offset(w / 2f, h), stroke)
+                    drawLine(iconColor, Offset(0f, h / 2f), Offset(w, h / 2f), stroke)
+                }
             }
             Spacer(Modifier.weight(1f))
             BasicText(formatClock(uiState.duration), style = TextStyle(color = TextDim, fontSize = 11.sp))
@@ -1653,6 +1706,7 @@ fun ImmersiveStatsScreen(
             Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(start = LocalImmersiveStartSpace.current)
                 .padding(horizontal = 18.dp, vertical = 14.dp)
                 // 和关于 / 设置一样：内容止于悬浮导航上方，不钻到栏底下
                 .padding(bottom = LocalImmersiveBottomSpace.current)
@@ -1970,25 +2024,22 @@ fun ImmersiveSplashScreen(onReady: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
+            Image(
+                painter = painterResource(R.mipmap.ic_launcher_foreground),
+                contentDescription = "BiliPlayer",
+                modifier = Modifier.size(136.dp)
+            )
+            Spacer(Modifier.height(6.dp))
             BasicText(
                 "BiliPlayer",
                 style = TextStyle(
                     color = TextPrimary,
-                    fontSize = 34.sp,
+                    fontSize = 28.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.5.sp
                 )
             )
-            Spacer(Modifier.height(6.dp))
-            BasicText(
-                "Liquid Glass",
-                style = TextStyle(
-                    color = Accent,
-                    fontSize = 12.sp,
-                    letterSpacing = 3.sp
-                )
-            )
-            Spacer(Modifier.height(30.dp))
+            Spacer(Modifier.height(26.dp))
             BasicText(
                 state.progress ?: "正在准备推荐内容…",
                 style = TextStyle(color = TextMuted, fontSize = 12.sp, textAlign = TextAlign.Center)
@@ -2014,6 +2065,13 @@ fun ImmersiveSplashScreen(onReady: () -> Unit) {
 
 /** 底部导航 +（可选）迷你播放条占用的高度，由宿主页提供。 */
 internal val LocalImmersiveBottomSpace = androidx.compose.runtime.compositionLocalOf { 0.dp }
+
+/** 横屏左侧竖向导航占用的宽度，由宿主页提供。 */
+internal val LocalImmersiveStartSpace = androidx.compose.runtime.compositionLocalOf { 0.dp }
+
+/** 子页面可以临时隐藏底部导航（例如歌单歌曲管理页）。 */
+internal val LocalHideBottomNav =
+    androidx.compose.runtime.compositionLocalOf { mutableStateOf(false) }
 
 internal enum class ImmersiveTab(val label: String) {
     RECOMMEND("推荐"),
@@ -2043,21 +2101,32 @@ fun ImmersiveHome(
     onSync: (Playlist) -> Unit,
     onRename: (Playlist, String) -> Unit,
     onDelete: (Playlist) -> Unit,
+    onLoginClick: () -> Unit = {},
     selectedTabIndex: Int = 0,
     onTabSelected: (Int) -> Unit = {},
     showMiniPlayer: Boolean = false,
     onExpandPlayer: () -> Unit = {},
+    onTrackStarted: () -> Unit = {},
 ) {
     val tab = ImmersiveTab.entries[
         selectedTabIndex.coerceIn(0, ImmersiveTab.entries.lastIndex)
     ]
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val railSpace = 98.dp
     val haze = rememberLiquidGlassState()
     val overlayPresence = remember { GlassOverlayPresence() }
+    val hideBottomNav = remember { mutableStateOf(false) }
 
     CompositionLocalProvider(
         LocalLiquidGlass provides haze,
         LocalGlassOverlayPresence provides overlayPresence,
-        LocalImmersiveBottomSpace provides if (showMiniPlayer) 170.dp else 96.dp
+        LocalHideBottomNav provides hideBottomNav,
+        LocalImmersiveStartSpace provides if (landscape && !hideBottomNav.value) railSpace else 0.dp,
+        LocalImmersiveBottomSpace provides when {
+            landscape -> if (showMiniPlayer) 90.dp else 0.dp
+            showMiniPlayer -> 170.dp
+            else -> 96.dp
+        }
     ) {
         Box(Modifier.fillMaxSize()) {
             AnimatedContent(
@@ -2075,7 +2144,9 @@ fun ImmersiveHome(
                 label = "immersiveTab"
             ) { current ->
                 when (current) {
-                    ImmersiveTab.RECOMMEND -> RecommendHomeScreen()
+                    ImmersiveTab.RECOMMEND -> RecommendHomeScreen(
+                        onTrackStarted = onTrackStarted
+                    )
                     ImmersiveTab.LIBRARY -> ImmersiveLibraryScreen(
                         playlists = playlists,
                         uiState = uiState,
@@ -2095,7 +2166,8 @@ fun ImmersiveHome(
                     )
                     ImmersiveTab.SETTINGS -> ImmersiveSettingsScreen(
                         immersiveMode = immersiveMode,
-                        onImmersiveModeChange = onImmersiveModeChange
+                        onImmersiveModeChange = onImmersiveModeChange,
+                        onLoginClick = onLoginClick
                     )
                     ImmersiveTab.ABOUT -> ImmersiveAboutScreen(
                         checking = checking,
@@ -2106,8 +2178,9 @@ fun ImmersiveHome(
                 }
             }
 
+            val navVisible = overlayPresence.count == 0 && !hideBottomNav.value
             AnimatedVisibility(
-                visible = overlayPresence.count == 0,
+                visible = navVisible && !landscape,
                 enter = fadeIn(tween(150)),
                 exit = fadeOut(tween(120)),
                 modifier = Modifier
@@ -2141,6 +2214,46 @@ fun ImmersiveHome(
                         selected = tab,
                         onSelect = { onTabSelected(it.ordinal) }
                     )
+                }
+            }
+
+            if (landscape) {
+                AnimatedVisibility(
+                    visible = navVisible,
+                    enter = fadeIn(tween(150)),
+                    exit = fadeOut(tween(120)),
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .windowInsetsPadding(WindowInsets.systemBars)
+                        .padding(start = 8.dp, top = 8.dp, bottom = 8.dp)
+                ) {
+                    ImmersiveNavRail(
+                        selected = tab,
+                        onSelect = { onTabSelected(it.ordinal) }
+                    )
+                }
+                AnimatedVisibility(
+                    visible = navVisible && showMiniPlayer,
+                    enter = slideInVertically(
+                        animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f)
+                    ) { it / 2 } +
+                        fadeIn(tween(140)) +
+                        scaleIn(
+                            initialScale = 0.90f,
+                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
+                        ),
+                    exit = slideOutVertically(tween(180)) { it / 2 } +
+                        fadeOut(tween(120)) +
+                        scaleOut(
+                            targetScale = 0.90f,
+                            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
+                        ),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .padding(start = railSpace + 8.dp, end = 14.dp, bottom = 8.dp)
+                ) {
+                    MiniPlayerBar(uiState = uiState, onExpand = onExpandPlayer)
                 }
             }
         }
@@ -2286,7 +2399,7 @@ private fun ImmersiveBottomNav(
             Column(
                 Modifier
                     .weight(1f)
-                    .clip(RoundedCornerShape(18.dp))
+                    .clip(GlassCapsule)
                     .background(if (active) Accent.copy(alpha = 0.12f) else Color.Transparent)
                     .liquidPress(onClick = { onSelect(tab) })
                     .padding(vertical = 6.dp),
@@ -2308,6 +2421,53 @@ private fun ImmersiveBottomNav(
                         .size(4.dp)
                         .clip(CircleShape)
                         .background(if (active) Accent else Color.Transparent)
+                )
+            }
+        }
+    }
+}
+
+/** 横屏左侧竖向导航。 */
+@Composable
+private fun ImmersiveNavRail(
+    selected: ImmersiveTab,
+    onSelect: (ImmersiveTab) -> Unit,
+) {
+    Column(
+        Modifier
+            .width(88.dp)
+            .fillMaxHeight()
+            .liquidGlass(
+                shape = RoundedCornerShape(30.dp),
+                blurRadius = 30.dp,
+                elevation = 18.dp,
+                tintAlpha = 1.6f
+            )
+            .padding(horizontal = 6.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.SpaceEvenly,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        ImmersiveTab.entries.forEach { tab ->
+            val active = tab == selected
+            val color = if (active) Accent else TextMuted
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(GlassCapsule)
+                    .background(if (active) Accent.copy(alpha = 0.12f) else Color.Transparent)
+                    .liquidPress(onClick = { onSelect(tab) })
+                    .padding(vertical = 9.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Canvas(Modifier.size(20.dp)) { drawNavGlyph(tab, color) }
+                Spacer(Modifier.height(3.dp))
+                BasicText(
+                    tab.label,
+                    style = TextStyle(
+                        color = color,
+                        fontSize = 10.sp,
+                        fontWeight = if (active) FontWeight.Medium else FontWeight.Normal
+                    )
                 )
             }
         }
@@ -2388,6 +2548,7 @@ fun ImmersiveRecommendScreen() {
             Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(start = LocalImmersiveStartSpace.current)
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2537,7 +2698,7 @@ private fun RecommendCard(item: RecommendItem, modifier: Modifier) {
 
 /** 推荐页：顶部“私人致享2.0”轮播，下面按合集展示最新视频。 */
 @Composable
-fun RecommendHomeScreen() {
+fun RecommendHomeScreen(onTrackStarted: () -> Unit = {}) {
     val context = LocalContext.current
     val state by RecommendStore.state.collectAsState()
     LaunchedEffect(Unit) {
@@ -2549,13 +2710,164 @@ fun RecommendHomeScreen() {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val columns = if (landscape) 3 else 2
 
+    var pendingAdd by remember { mutableStateOf<BiliTrack?>(null) }
+    var showSearch by remember { mutableStateOf(false) }
+
     LiquidGlassScaffold {
+        if (showSearch) {
+            SearchScreen(
+                onBack = { showSearch = false },
+                onTrackStarted = onTrackStarted
+            )
+        } else {
         val detail = state.detail
         if (detail != null) {
-            RecommendDetailPage(detail = detail, columns = columns)
+            RecommendDetailPage(
+                detail = detail,
+                columns = columns,
+                onAdd = { pendingAdd = it.toTrack() },
+                onTrackStarted = onTrackStarted
+            )
         } else {
-            RecommendListPage(state = state, columns = columns, landscape = landscape)
+            RecommendListPage(
+                state = state,
+                columns = columns,
+                landscape = landscape,
+                onAdd = { pendingAdd = it.toTrack() },
+                onTrackStarted = onTrackStarted,
+                onOpenSearch = { showSearch = true }
+            )
         }
+        }
+
+        pendingAdd?.let { track ->
+            AddToPlaylistSheet(track = track, onDismiss = { pendingAdd = null })
+        }
+    }
+}
+
+private fun RecommendVideo.toTrack(): BiliTrack =
+    BiliTrack(bvid = bvid, title = title, cover = cover)
+
+/** 全站视频搜索页（DOM 抓取）。 */
+@Composable
+private fun SearchScreen(
+    onBack: () -> Unit,
+    onTrackStarted: () -> Unit,
+) {
+    val context = LocalContext.current
+    val state by SearchStore.state.collectAsState()
+    var query by remember { mutableStateOf(state.query) }
+    var pendingAdd by remember { mutableStateOf<BiliTrack?>(null) }
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val columns = if (landscape) 3 else 2
+    val host = (context as? android.app.Activity)?.window?.decorView as? ViewGroup
+
+    LaunchedEffect(Unit) { SearchStore.init(context) }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.systemBars)
+            .padding(start = LocalImmersiveStartSpace.current)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ImmersiveChip("← 返回", onBack)
+            Spacer(Modifier.width(10.dp))
+            BasicText(
+                "搜索",
+                style = TextStyle(color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            )
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                textStyle = TextStyle(color = TextPrimary, fontSize = 14.sp),
+                cursorBrush = Brush.verticalGradient(listOf(Accent, Accent)),
+                modifier = Modifier
+                    .weight(1f)
+                    .liquidGlass(
+                        shape = RoundedCornerShape(14.dp),
+                        blurRadius = 16.dp,
+                        elevation = 0.dp
+                    )
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                decorationBox = { inner ->
+                    Box {
+                        if (query.isEmpty()) {
+                            BasicText(
+                                "搜索视频",
+                                style = TextStyle(color = TextDim, fontSize = 13.sp)
+                            )
+                        }
+                        inner()
+                    }
+                }
+            )
+            Spacer(Modifier.width(8.dp))
+            Pill(
+                "搜索",
+                highlighted = query.isNotBlank(),
+                enabled = !state.loading && query.isNotBlank(),
+                onClick = { SearchStore.search(context, query, host) }
+            )
+        }
+
+        state.progress?.let {
+            Spacer(Modifier.height(8.dp))
+            BasicText(it, style = TextStyle(color = Accent, fontSize = 11.sp))
+        }
+        state.error?.let {
+            Spacer(Modifier.height(8.dp))
+            BasicText(it, style = TextStyle(color = Color(0xFFFF8A8A), fontSize = 12.sp))
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        if (state.results.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                BasicText(
+                    if (state.loading) "正在搜索…" else "输入关键词开始搜索",
+                    style = TextStyle(color = TextMuted, fontSize = 13.sp, textAlign = TextAlign.Center)
+                )
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                itemsIndexed(state.results.chunked(columns)) { _, row ->
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        row.forEach { video ->
+                            RecommendVideoCard(
+                                video = video,
+                                modifier = Modifier.weight(1f),
+                                onAdd = { pendingAdd = it.toTrack() },
+                                onTrackStarted = onTrackStarted
+                            )
+                        }
+                        repeat(columns - row.size) {
+                            Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
+                item {
+                    Spacer(Modifier.height(LocalImmersiveBottomSpace.current + 16.dp))
+                }
+            }
+        }
+    }
+
+    pendingAdd?.let { track ->
+        AddToPlaylistSheet(track = track, onDismiss = { pendingAdd = null })
     }
 }
 
@@ -2564,12 +2876,22 @@ private fun RecommendListPage(
     state: RecommendState,
     columns: Int,
     landscape: Boolean,
+    onAdd: (RecommendVideo) -> Unit,
+    onTrackStarted: () -> Unit,
+    onOpenSearch: () -> Unit,
 ) {
     val context = LocalContext.current
+    val configuredSource = Preferences.recommendSource(context)
+    val sourceLabel = if (configuredSource == Preferences.DEFAULT_RECOMMEND_SOURCE) {
+        "JLRS-LeoFM"
+    } else {
+        "自定义来源"
+    }
     Column(
         Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.systemBars)
+            .padding(start = LocalImmersiveStartSpace.current)
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2579,10 +2901,53 @@ private fun RecommendListPage(
                     style = TextStyle(color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 )
                 BasicText(
-                    "固定来源 · JLRS-LeoFM",
+                    "来源 · $sourceLabel",
                     style = TextStyle(color = TextMuted, fontSize = 11.sp)
                 )
             }
+            Row(
+                Modifier
+                    .clip(GlassCapsule)
+                    .liquidGlass(
+                        shape = GlassCapsule,
+                        blurRadius = 18.dp,
+                        elevation = 5.dp
+                    )
+                    .liquidPress(onClick = onOpenSearch)
+                    .padding(horizontal = 14.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val iconColor = TextPrimary
+                Canvas(Modifier.size(14.dp)) {
+                    val w = size.width
+                    val h = size.height
+                    val stroke = 1.6.dp.toPx()
+                    drawCircle(
+                        color = iconColor,
+                        radius = w * 0.32f,
+                        center = Offset(w * 0.40f, h * 0.40f),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(stroke)
+                    )
+                    drawLine(
+                        iconColor,
+                        Offset(w * 0.62f, h * 0.62f),
+                        Offset(w * 0.92f, h * 0.92f),
+                        stroke,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                }
+                Spacer(Modifier.width(6.dp))
+                BasicText(
+                    "搜索",
+                    style = TextStyle(
+                        color = TextPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        letterSpacing = 0.4.sp
+                    )
+                )
+            }
+            Spacer(Modifier.width(8.dp))
             Pill("刷新", enabled = !state.loading, onClick = {
                 RecommendStore.refresh(
                     (context as? android.app.Activity)?.window?.decorView as? ViewGroup
@@ -2609,43 +2974,100 @@ private fun RecommendListPage(
             return@Column
         }
 
-        val featured = state.items.firstOrNull { it.title == "私人致享2.0" }
-            ?: state.items.firstOrNull { it.videos.isNotEmpty() }
-        val others = state.items.filter { it.id != featured?.id }
+        // 轮播：每个合集取最新一个视频，最多 5 个
+        val carouselCollections = state.items
+            .filter { it.videos.isNotEmpty() }
+            .take(5)
+        val carouselEntries = carouselCollections.map {
+            CarouselEntry(it.title, it.videos.first())
+        }
+        // 轮播只是顶部摘要，下面仍然展示全部合集
+        val others = state.items
 
-        LazyColumn(
-            Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            val featuredVideos = featured?.videos.orEmpty()
-            if (featuredVideos.isNotEmpty()) {
-                item {
-                    FeaturedCarousel(
-                        videos = featuredVideos,
-                        height = if (landscape) 220.dp else 200.dp
+        if (landscape) {
+            // 横屏：左侧轮播，右侧合集列表
+            Row(
+                Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Column(
+                    Modifier.weight(0.42f).fillMaxHeight()
+                ) {
+                    if (carouselEntries.isNotEmpty()) {
+                        FeaturedCarousel(
+                            entries = carouselEntries,
+                            height = 250.dp,
+                            onAdd = onAdd,
+                            onTrackStarted = onTrackStarted
+                        )
+                    }
+                }
+                LazyColumn(
+                    Modifier.weight(0.58f).fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    itemsIndexed(others, key = { _, item -> item.id }) { _, item ->
+                        RecommendCollectionSection(
+                            item = item,
+                            onOpen = { RecommendStore.openCollection(item) },
+                            onAdd = onAdd,
+                            onTrackStarted = onTrackStarted
+                        )
+                    }
+                    item {
+                        Spacer(Modifier.height(LocalImmersiveBottomSpace.current + 16.dp))
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                if (carouselEntries.isNotEmpty()) {
+                    item { Spacer(Modifier.height(16.dp)) }
+                    item {
+                        FeaturedCarousel(
+                            entries = carouselEntries,
+                            height = 200.dp,
+                            onAdd = onAdd,
+                            onTrackStarted = onTrackStarted
+                        )
+                    }
+                }
+                itemsIndexed(others, key = { _, item -> item.id }) { _, item ->
+                    RecommendCollectionSection(
+                        item = item,
+                        onOpen = { RecommendStore.openCollection(item) },
+                        onAdd = onAdd,
+                        onTrackStarted = onTrackStarted
                     )
                 }
+                item { Spacer(Modifier.height(LocalImmersiveBottomSpace.current + 16.dp)) }
             }
-            itemsIndexed(others, key = { _, item -> item.id }) { _, item ->
-                RecommendCollectionSection(item) {
-                    RecommendStore.openCollection(item)
-                }
-            }
-            item { Spacer(Modifier.height(LocalImmersiveBottomSpace.current + 16.dp)) }
         }
     }
 }
 
+private data class CarouselEntry(
+    val label: String,
+    val video: RecommendVideo,
+)
+
 @Composable
-private fun FeaturedCarousel(videos: List<RecommendVideo>, height: Dp) {
-    val context = LocalContext.current
-    val pagerState = rememberPagerState(pageCount = { videos.size })
-    LaunchedEffect(videos.size) {
-        if (videos.size <= 1) return@LaunchedEffect
+private fun FeaturedCarousel(
+    entries: List<CarouselEntry>,
+    height: Dp,
+    onAdd: (RecommendVideo) -> Unit,
+    onTrackStarted: () -> Unit,
+) {
+    val pagerState = rememberPagerState(pageCount = { entries.size })
+    LaunchedEffect(entries.size) {
+        if (entries.size <= 1) return@LaunchedEffect
         while (true) {
             delay(4200)
             if (!pagerState.isScrollInProgress) {
-                pagerState.animateScrollToPage((pagerState.currentPage + 1) % videos.size)
+                pagerState.animateScrollToPage((pagerState.currentPage + 1) % entries.size)
             }
         }
     }
@@ -2656,18 +3078,34 @@ private fun FeaturedCarousel(videos: List<RecommendVideo>, height: Dp) {
             pageSpacing = 10.dp,
             modifier = Modifier.fillMaxWidth().height(height)
         ) { page ->
-            val video = videos[page]
+            val entry = entries[page]
+            val video = entry.video
             Box(
                 Modifier
                     .fillMaxSize()
                     .clip(RoundedCornerShape(26.dp))
                     .liquidPress(onClick = {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(video.url)))
-                        }
+                        // 点轮播：加入临时队列并立刻播放这一首
+                        PlayerController.playTemporarily(video.toTrack())
+                        onTrackStarted()
                     })
             ) {
                 CoverBitmap(video.cover, Modifier.fillMaxSize())
+                Box(Modifier.align(Alignment.TopEnd).padding(12.dp)) {
+                    LiquidCircleButton(
+                        size = 32.dp,
+                        onClick = { onAdd(video) }
+                    ) {
+                        val iconColor = TextPrimary
+                        Canvas(Modifier.size(13.dp)) {
+                            val w = size.width
+                            val h = size.height
+                            val stroke = 1.8.dp.toPx()
+                            drawLine(iconColor, Offset(w / 2f, 0f), Offset(w / 2f, h), stroke)
+                            drawLine(iconColor, Offset(0f, h / 2f), Offset(w, h / 2f), stroke)
+                        }
+                    }
+                }
                 Box(
                     Modifier.fillMaxSize().background(
                         Brush.verticalGradient(
@@ -2680,7 +3118,7 @@ private fun FeaturedCarousel(videos: List<RecommendVideo>, height: Dp) {
                     Modifier.align(Alignment.BottomStart).padding(16.dp)
                 ) {
                     BasicText(
-                        "私人致享2.0",
+                        entry.label,
                         style = TextStyle(
                             color = Accent,
                             fontSize = 10.sp,
@@ -2708,7 +3146,7 @@ private fun FeaturedCarousel(videos: List<RecommendVideo>, height: Dp) {
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            videos.indices.forEach { i ->
+            entries.indices.forEach { i ->
                 Box(
                     Modifier
                         .padding(horizontal = 2.dp)
@@ -2728,6 +3166,8 @@ private fun FeaturedCarousel(videos: List<RecommendVideo>, height: Dp) {
 private fun RecommendCollectionSection(
     item: RecommendItem,
     onOpen: () -> Unit,
+    onAdd: (RecommendVideo) -> Unit,
+    onTrackStarted: () -> Unit,
 ) {
     Column {
         Row(
@@ -2762,7 +3202,12 @@ private fun RecommendCollectionSection(
         } else {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 itemsIndexed(item.videos) { _, video ->
-                    RecommendVideoCard(video, Modifier.width(154.dp))
+                    RecommendVideoCard(
+                        video = video,
+                        modifier = Modifier.width(154.dp),
+                        onAdd = onAdd,
+                        onTrackStarted = onTrackStarted
+                    )
                 }
             }
         }
@@ -2770,14 +3215,18 @@ private fun RecommendCollectionSection(
 }
 
 @Composable
-private fun RecommendVideoCard(video: RecommendVideo, modifier: Modifier) {
-    val context = LocalContext.current
+private fun RecommendVideoCard(
+    video: RecommendVideo,
+    modifier: Modifier,
+    onAdd: (RecommendVideo) -> Unit,
+    onTrackStarted: () -> Unit,
+) {
     Column(
         modifier
             .liquidPress(onClick = {
-                runCatching {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(video.url)))
-                }
+                // 点卡片：加入临时队列并立刻播放这一首
+                PlayerController.playTemporarily(video.toTrack())
+                onTrackStarted()
             })
     ) {
         Box(
@@ -2789,6 +3238,21 @@ private fun RecommendVideoCard(video: RecommendVideo, modifier: Modifier) {
         ) {
             if (video.cover.isNotBlank()) {
                 CoverBitmap(video.cover, Modifier.fillMaxSize())
+            }
+            Box(Modifier.align(Alignment.TopEnd).padding(6.dp)) {
+                LiquidCircleButton(
+                    size = 28.dp,
+                    onClick = { onAdd(video) }
+                ) {
+                    val iconColor = TextPrimary
+                    Canvas(Modifier.size(12.dp)) {
+                        val w = size.width
+                        val h = size.height
+                        val stroke = 1.8.dp.toPx()
+                        drawLine(iconColor, Offset(w / 2f, 0f), Offset(w / 2f, h), stroke)
+                        drawLine(iconColor, Offset(0f, h / 2f), Offset(w, h / 2f), stroke)
+                    }
+                }
             }
         }
         Spacer(Modifier.height(5.dp))
@@ -2802,11 +3266,17 @@ private fun RecommendVideoCard(video: RecommendVideo, modifier: Modifier) {
 }
 
 @Composable
-private fun RecommendDetailPage(detail: RecommendDetail, columns: Int) {
+private fun RecommendDetailPage(
+    detail: RecommendDetail,
+    columns: Int,
+    onAdd: (RecommendVideo) -> Unit,
+    onTrackStarted: () -> Unit,
+) {
     Column(
         Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.systemBars)
+            .padding(start = LocalImmersiveStartSpace.current)
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2860,7 +3330,12 @@ private fun RecommendDetailPage(detail: RecommendDetail, columns: Int) {
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     row.forEach { video ->
-                        RecommendVideoCard(video, Modifier.weight(1f))
+                        RecommendVideoCard(
+                            video = video,
+                            modifier = Modifier.weight(1f),
+                            onAdd = onAdd,
+                            onTrackStarted = onTrackStarted
+                        )
                     }
                     repeat(columns - row.size) {
                         Spacer(Modifier.weight(1f))
@@ -2869,6 +3344,70 @@ private fun RecommendDetailPage(detail: RecommendDetail, columns: Int) {
             }
             item { Spacer(Modifier.height(LocalImmersiveBottomSpace.current + 16.dp)) }
         }
+    }
+}
+
+@Composable
+private fun PlaylistCard(
+    pl: Playlist,
+    currentPlaylistId: String,
+    stats: Map<String, Map<String, Long>>,
+    onPlay: (Playlist) -> Unit,
+    onMenu: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val playing = pl.id == currentPlaylistId
+    val listened = stats[pl.id]?.values?.sum() ?: 0L
+    Row(
+        modifier
+            .liquidPress(onClick = { onPlay(pl) })
+            .liquidGlass(
+                shape = RoundedCornerShape(24.dp),
+                blurRadius = 24.dp,
+                tint = if (playing) Accent.copy(alpha = 0.30f) else Color.Unspecified,
+                elevation = 8.dp
+            )
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(58.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(GlassSoft)
+        ) {
+            val cover = pl.tracks.firstOrNull()?.cover.orEmpty()
+            if (cover.isNotBlank()) {
+                CoverBitmap(url = cover, modifier = Modifier.fillMaxSize())
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            BasicText(
+                pl.name,
+                style = TextStyle(
+                    color = if (playing) Accent else TextPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            BasicText(
+                buildString {
+                    append("${pl.tracks.size} 首")
+                    if (listened > 0) append(" · 已听 ${fmtDuration(listened)}")
+                },
+                style = TextStyle(color = TextMuted, fontSize = 11.sp)
+            )
+            if (pl.updatedAt > 0) {
+                BasicText(
+                    "更新于 ${fmtDate(pl.updatedAt)}",
+                    style = TextStyle(color = TextDim, fontSize = 10.sp)
+                )
+            }
+        }
+        CircleMenuButton { onMenu(pl.id) }
     }
 }
 
@@ -2884,9 +3423,18 @@ fun ImmersiveLibraryScreen(
     onRename: (Playlist, String) -> Unit,
     onDelete: (Playlist) -> Unit,
 ) {
+    val context = LocalContext.current
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     var menuFor by remember { mutableStateOf<String?>(null) }
     var renameTarget by remember { mutableStateOf<Playlist?>(null) }
     var deleteTarget by remember { mutableStateOf<Playlist?>(null) }
+    var createPlaylist by remember { mutableStateOf(false) }
+    var managingPlaylistId by remember { mutableStateOf<String?>(null) }
+
+    managingPlaylistId?.let { id ->
+        PlaylistTracksScreen(playlistId = id, onBack = { managingPlaylistId = null })
+        return
+    }
 
     BackHandler(enabled = menuFor != null || renameTarget != null || deleteTarget != null) {
         when {
@@ -2901,6 +3449,7 @@ fun ImmersiveLibraryScreen(
             Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(start = LocalImmersiveStartSpace.current)
                 .padding(horizontal = 18.dp, vertical = 14.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2914,6 +3463,8 @@ fun ImmersiveLibraryScreen(
                         style = TextStyle(color = TextMuted, fontSize = 11.sp)
                     )
                 }
+                Pill("新建") { createPlaylist = true }
+                Spacer(Modifier.width(8.dp))
                 Pill("＋ 导入", highlighted = true) { onImportClick() }
             }
 
@@ -2962,60 +3513,39 @@ fun ImmersiveLibraryScreen(
             }
 
             LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                itemsIndexed(playlists, key = { _, p -> p.id }) { _, pl ->
-                    val playing = pl.id == currentPlaylistId
-                    val listened = stats[pl.id]?.values?.sum() ?: 0L
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .liquidPress(onClick = { onPlay(pl) })
-                            .liquidGlass(
-                                shape = RoundedCornerShape(24.dp),
-                                blurRadius = 24.dp,
-                                tint = if (playing) Accent.copy(alpha = 0.30f) else Color.Unspecified,
-                                elevation = 8.dp
-                            )
-                            .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            Modifier
-                                .size(58.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(GlassSoft)
+                if (landscape) {
+                    // 横屏两列
+                    itemsIndexed(
+                        playlists.chunked(2),
+                        key = { _, row -> row.joinToString("|") { it.id } }
+                    ) { _, row ->
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            val cover = pl.tracks.firstOrNull()?.cover.orEmpty()
-                            if (cover.isNotBlank()) {
-                                CoverBitmap(url = cover, modifier = Modifier.fillMaxSize())
-                            }
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            BasicText(
-                                pl.name,
-                                style = TextStyle(
-                                    color = if (playing) Accent else TextPrimary,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Medium
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            BasicText(
-                                buildString {
-                                    append("${pl.tracks.size} 首")
-                                    if (listened > 0) append(" · 已听 ${fmtDuration(listened)}")
-                                },
-                                style = TextStyle(color = TextMuted, fontSize = 11.sp)
-                            )
-                            if (pl.updatedAt > 0) {
-                                BasicText(
-                                    "更新于 ${fmtDate(pl.updatedAt)}",
-                                    style = TextStyle(color = TextDim, fontSize = 10.sp)
+                            row.forEach { pl ->
+                                PlaylistCard(
+                                    pl = pl,
+                                    currentPlaylistId = currentPlaylistId,
+                                    stats = stats,
+                                    onPlay = onPlay,
+                                    onMenu = { menuFor = it },
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
+                            if (row.size == 1) Spacer(Modifier.weight(1f))
                         }
-                        CircleMenuButton { menuFor = pl.id }
+                    }
+                } else {
+                    itemsIndexed(playlists, key = { _, p -> p.id }) { _, pl ->
+                        PlaylistCard(
+                            pl = pl,
+                            currentPlaylistId = currentPlaylistId,
+                            stats = stats,
+                            onPlay = onPlay,
+                            onMenu = { menuFor = it },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
                 item {
@@ -3206,6 +3736,15 @@ fun ImmersiveLibraryScreen(
                             menuFor = null
                         }
                         SheetActionRow(
+                            glyph = SheetGlyph.TRACKS,
+                            title = "管理歌曲",
+                            subtitle = "调整顺序或删除歌单里的歌曲",
+                            accent = Accent
+                        ) {
+                            managingPlaylistId = pl.id
+                            menuFor = null
+                        }
+                        SheetActionRow(
                             glyph = SheetGlyph.RENAME,
                             title = "重命名",
                             subtitle = "只修改本机显示的名称",
@@ -3232,6 +3771,23 @@ fun ImmersiveLibraryScreen(
                             LiquidPill("取消") { menuFor = null }
                         }
                     }
+            }
+        }
+
+        // ---------- 新建歌单 ----------
+        if (createPlaylist) {
+            GlassDialog(onDismiss = { createPlaylist = false }) { close ->
+                ImmersiveInputDialog(
+                    title = "新建歌单",
+                    initial = "",
+                    placeholder = "歌单名称",
+                    confirmText = "创建",
+                    onConfirm = { name ->
+                        PlaylistStore.createManual(context, name)
+                        close()
+                    },
+                    onDismiss = close
+                )
             }
         }
 
@@ -3294,7 +3850,7 @@ private fun SheetInfoTag(label: String, value: String, modifier: Modifier = Modi
     }
 }
 
-private enum class SheetGlyph { PLAY, SYNC, RENAME, DELETE }
+private enum class SheetGlyph { PLAY, SYNC, TRACKS, RENAME, DELETE }
 
 /** 播放列表详情里的整行操作：图标 + 标题 + 说明。 */
 @Composable
@@ -3396,6 +3952,13 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawSheetGlyph(
                 },
                 color
             )
+        }
+
+        SheetGlyph.TRACKS -> {
+            listOf(0.26f, 0.50f, 0.74f).forEach { fy ->
+                drawCircle(color, radius = stroke * 0.8f, center = Offset(w * 0.14f, h * fy))
+                drawLine(color, Offset(w * 0.30f, h * fy), Offset(w * 0.86f, h * fy), stroke)
+            }
         }
 
         SheetGlyph.RENAME -> {
@@ -3648,6 +4211,7 @@ fun ImmersiveAboutScreen(
                 Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(start = LocalImmersiveStartSpace.current)
                     .padding(horizontal = 18.dp, vertical = 14.dp)
             ) {
                 Header()
@@ -3684,6 +4248,7 @@ fun ImmersiveAboutScreen(
                 Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(start = LocalImmersiveStartSpace.current)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 22.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -3703,11 +4268,13 @@ fun ImmersiveAboutScreen(
 fun ImmersiveSettingsScreen(
     immersiveMode: Boolean,
     onImmersiveModeChange: (Boolean) -> Unit,
+    onLoginClick: () -> Unit = {},
     onBack: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var backupMsg by remember { mutableStateOf<String?>(null) }
+    var recommendUid by remember { mutableStateOf(Preferences.recommendSourceUid(context)) }
     var base by remember { mutableStateOf(Preferences.lrcLibBaseUrl(context)) }
     var font by remember { mutableStateOf(LyricsOverlay.currentFontSize()) }
     var locked by remember { mutableStateOf(LyricsOverlay.isLocked()) }
@@ -3727,7 +4294,7 @@ fun ImmersiveSettingsScreen(
                     } != null
                 }.getOrDefault(false)
             }
-            backupMsg = if (ok) "已导出偏好与歌词" else "导出失败"
+            backupMsg = if (ok) "已导出偏好、歌单与歌词" else "导出失败"
         }
     }
     val importLauncher = rememberLauncherForActivityResult(
@@ -3744,7 +4311,7 @@ fun ImmersiveSettingsScreen(
                 }.getOrNull()
             }
             backupMsg = if (result != null)
-                "已导入 ${result.preferences} 条偏好、${result.lyrics} 条歌词"
+                "已导入 ${result.preferences} 条偏好、${result.lyrics} 条歌词、${result.playlists} 个歌单"
             else "导入失败：文件格式不支持"
         }
     }
@@ -3806,6 +4373,52 @@ fun ImmersiveSettingsScreen(
                     base = Preferences.DEFAULT_LRCLIB_BASE
                     Preferences.saveLrcLibBaseUrl(context, base)
                     LrcLib.init(context)
+                }
+            }
+            ImmersiveDivider()
+            ImmersiveSection("账号")
+            ImmersiveRow(
+                "登录 B 站",
+                "登录后可访问私密收藏夹",
+                { Pill("登录", onClick = onLoginClick) }
+            )
+            ImmersiveDivider()
+
+            ImmersiveSection("推荐来源")
+            BasicText(
+                "填 UP 的 UID，例如 3493093607213343；程序自动拼合集页地址。",
+                style = TextStyle(color = TextMuted, fontSize = 11.sp)
+            )
+            BasicTextField(
+                value = recommendUid,
+                onValueChange = { recommendUid = it.filter(Char::isDigit) },
+                singleLine = true,
+                textStyle = TextStyle(color = TextPrimary, fontSize = 13.sp),
+                cursorBrush = Brush.verticalGradient(listOf(Accent, Accent)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .liquidGlass(
+                        shape = RoundedCornerShape(12.dp),
+                        blurRadius = 14.dp,
+                        elevation = 0.dp
+                    )
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Pill("保存并刷新") {
+                    val source = Preferences.normalizeRecommendSource(recommendUid)
+                    Preferences.saveRecommendSource(context, source)
+                    RecommendStore.updateSource(context, source)
+                    android.widget.Toast.makeText(
+                        context,
+                        "推荐来源已更新",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+                Pill("恢复默认") {
+                    recommendUid = Preferences.DEFAULT_RECOMMEND_UID
+                    Preferences.saveRecommendSource(context, Preferences.DEFAULT_RECOMMEND_SOURCE)
+                    RecommendStore.updateSource(context, Preferences.DEFAULT_RECOMMEND_SOURCE)
                 }
             }
             ImmersiveDivider()
@@ -3905,6 +4518,7 @@ fun ImmersiveSettingsScreen(
                 Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(start = LocalImmersiveStartSpace.current)
                     .padding(horizontal = 18.dp, vertical = 14.dp)
             ) {
                 Header()
@@ -3940,6 +4554,7 @@ fun ImmersiveSettingsScreen(
                 Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(start = LocalImmersiveStartSpace.current)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 22.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)

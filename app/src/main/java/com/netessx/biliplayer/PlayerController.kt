@@ -230,12 +230,12 @@ object PlayerController {
                     _state.update { it.copy(fetchError = "同步失败：收藏夹为空或不可见") }
                     return@getFavlist
                 }
-                val updated = PlaylistStore.replaceTracks(appContext, id, tracks)
-                // 同步后曲目可能变了，裁掉已不在列表里的统计
-                PlaybackStats.retainTracks(appContext, id, tracks.map { it.bvid })
-                appendLog("已同步「${pl.name}」：${tracks.size} 个视频")
-                // 正在播放这个列表 → 用新曲目重起，否则只更新库
-                if (updated != null && currentPlaylistId == id) playPlaylist(updated)
+                val before = PlaylistStore.get(id)?.tracks?.size ?: 0
+                val updated = PlaylistStore.mergeTracks(appContext, id, tracks)
+                val added = ((updated?.tracks?.size ?: before) - before).coerceAtLeast(0)
+                appendLog("已增量同步「${pl.name}」：新增 $added 个视频，保留原有 ${before} 个")
+                // 有新增且正在播放这个列表 → 用合并后的曲目重起
+                if (updated != null && added > 0 && currentPlaylistId == id) playPlaylist(updated)
             },
             onError = { e ->
                 _state.update { it.copy(isFetching = false, fetchHint = null, syncingPlaylistId = "", fetchError = e) }
@@ -274,6 +274,67 @@ object PlayerController {
     fun setVolume(v: Int) {
         Preferences.saveVolume(appContext, v)
         player?.requestVolume(v)
+    }
+
+    /**
+     * 加入本地歌单；如果目标正是当前正在播放的列表，
+     * 同时把歌追加到内存队列，播放页的播放列表立即刷新。
+     */
+    fun addTrackToPlaylist(playlistId: String, track: BiliTrack) {
+        val updated = PlaylistStore.addTrack(appContext, playlistId, track)
+        if (updated == null) {
+            // _toast.tryEmit("歌单不存在")
+            return
+        }
+        if (playlistId == currentPlaylistId) {
+            player?.appendTrack(track)
+            syncState()
+        }
+        _toast.tryEmit("已添加到「${updated.name}」")
+    }
+
+    /** 临时加入当前播放队列（不写回歌单）。 */
+    fun addToQueue(track: BiliTrack) {
+        val p = player
+        if (p == null) {
+            // _toast.tryEmit("当前没有正在播放的列表")
+            return
+        }
+        p.addToQueue(track)
+        // _toast.tryEmit(if (ok) "已临时加入播放队列" else "已在播放队列中")
+        syncState()
+    }
+
+    /**
+     * 推荐页点击：没有播放器时创建临时队列并起播；
+     * 已经有队列时追加（按 bvid 去重）后立即播放这一首。
+     */
+    fun playTemporarily(track: BiliTrack) {
+        if (track.bvid.isBlank()) return
+        val p = player
+        if (p == null) {
+            currentPlaylistId = ""
+            _state.update {
+                it.copy(
+                    playlist = listOf(track),
+                    currentIndex = 0,
+                    currentBvid = track.bvid,
+                    currentTitle = track.title,
+                    currentCover = track.cover,
+                    fetchError = null,
+                    isFetching = false
+                )
+            }
+            PlayerService.start(appContext)
+            startPlayer(listOf(track))
+            // _toast.tryEmit("已创建临时播放列表并开始播放")
+            return
+        }
+        p.addToQueue(track)
+        val index = p.playlist.indexOfFirst { it.bvid == track.bvid }
+        if (index >= 0) p.playIndex(index)
+        syncState()
+        // _toast.tryEmit("正在播放：${track.title.ifBlank { track.bvid }}")
     }
 
     fun setPlayMode(mode: PlayMode) {

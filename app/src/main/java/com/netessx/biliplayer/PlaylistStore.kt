@@ -157,6 +157,117 @@ object PlaylistStore {
         return pl
     }
 
+    /** 手动新建一个歌单（不绑定收藏夹，不参与导入去重）。 */
+    fun createManual(
+        context: Context,
+        name: String,
+        tracks: List<BiliTrack> = emptyList(),
+    ): Playlist {
+        init(context)
+        val now = System.currentTimeMillis()
+        val pl = Playlist(
+            id = java.util.UUID.randomUUID().toString(),
+            name = name.trim().ifBlank { "新建歌单" },
+            uid = "",
+            favName = "",
+            tracks = tracks,
+            updatedAt = now,
+        )
+        _playlists.value = _playlists.value + pl
+        persist()
+        return pl
+    }
+
+    /** 往歌单里追加一首（按 bvid 去重）。 */
+    fun addTrack(context: Context, id: String, track: BiliTrack): Playlist? {
+        init(context)
+        val pl = get(id) ?: return null
+        if (pl.tracks.any { it.bvid == track.bvid }) return pl
+        val updated = pl.copy(
+            tracks = pl.tracks + track,
+            updatedAt = System.currentTimeMillis()
+        )
+        _playlists.value = _playlists.value.map { if (it.id == id) updated else it }
+        persist()
+        return updated
+    }
+
+    /**
+     * 增量同步：已有曲目保留并更新元数据，新抓到的追加到末尾，不删除任何旧曲目。
+     */
+    fun mergeTracks(context: Context, id: String, fetched: List<BiliTrack>): Playlist? {
+        init(context)
+        val old = get(id) ?: return null
+        val byBvid = fetched.associateBy { it.bvid }
+        val existingIds = old.tracks.map { it.bvid }.toSet()
+        val updatedTracks = old.tracks.map { byBvid[it.bvid] ?: it } +
+            fetched.filter { it.bvid !in existingIds }
+        val updated = old.copy(
+            tracks = updatedTracks,
+            updatedAt = System.currentTimeMillis()
+        )
+        _playlists.value = _playlists.value.map { if (it.id == id) updated else it }
+        persist()
+        return updated
+    }
+
+    /** 调整歌单内曲目顺序。 */
+    fun moveTrack(context: Context, id: String, from: Int, to: Int): Playlist? {
+        init(context)
+        val pl = get(id) ?: return null
+        if (from !in pl.tracks.indices || to !in pl.tracks.indices || from == to) return pl
+        val list = pl.tracks.toMutableList()
+        val item = list.removeAt(from)
+        list.add(to, item)
+        val updated = pl.copy(tracks = list, updatedAt = System.currentTimeMillis())
+        _playlists.value = _playlists.value.map { if (it.id == id) updated else it }
+        persist()
+        return updated
+    }
+
+    /** 删除歌单内指定位置的曲目。 */
+    fun removeTrackAt(context: Context, id: String, index: Int): Playlist? {
+        init(context)
+        val pl = get(id) ?: return null
+        if (index !in pl.tracks.indices) return pl
+        val list = pl.tracks.toMutableList().also { it.removeAt(index) }
+        val updated = pl.copy(tracks = list, updatedAt = System.currentTimeMillis())
+        _playlists.value = _playlists.value.map { if (it.id == id) updated else it }
+        persist()
+        return updated
+    }
+
+    /** 从备份合并歌单：同 id 保留旧曲目并追加新曲目，不删除本地内容。 */
+    fun mergeImported(context: Context, imported: List<Playlist>): Int {
+        init(context)
+        var changed = 0
+        val current = _playlists.value.toMutableList()
+        imported.forEach { incoming ->
+            val index = current.indexOfFirst { it.id == incoming.id }
+            if (index < 0) {
+                current.add(incoming)
+                changed++
+            } else {
+                val old = current[index]
+                val oldIds = old.tracks.map { it.bvid }.toSet()
+                val mergedTracks = old.tracks + incoming.tracks.filter { it.bvid !in oldIds }
+                if (mergedTracks.size != old.tracks.size || incoming.name != old.name) {
+                    current[index] = old.copy(
+                        name = incoming.name.ifBlank { old.name },
+                        tracks = mergedTracks,
+                        updatedAt = maxOf(old.updatedAt, incoming.updatedAt)
+                    )
+                    changed++
+                }
+            }
+        }
+        if (changed > 0) {
+            _playlists.value = current
+            persist()
+        }
+        return changed
+    }
+
     /** 同步：用新抓到的曲目覆盖，名字与 uid 保持不变。 */
     fun replaceTracks(context: Context, id: String, tracks: List<BiliTrack>): Playlist? {
         init(context)

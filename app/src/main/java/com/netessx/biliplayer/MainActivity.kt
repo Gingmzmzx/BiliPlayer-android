@@ -193,6 +193,13 @@ fun BiliPlayerApp() {
     var showLogs by remember { mutableStateOf(false) }
     // 实验性沉浸式播放页
     var immersive by rememberSaveable { mutableStateOf(false) }
+    // 收起后的迷你播放条
+    var miniPlayer by rememberSaveable { mutableStateOf(false) }
+    var miniExpanding by remember { mutableStateOf(false) }
+    // 0 = 推荐；关闭播放页后回到这个 tab，而不是固定歌单页
+    var immersiveTab by rememberSaveable { mutableStateOf(0) }
+    // 冷启动 splash：推荐内容加载完成后再进入主界面
+    var showSplash by rememberSaveable { mutableStateOf(true) }
     // 统一的沉浸式界面开关：播放器 / 统计 / 设置一起切换
     var immersiveMode by remember {
         mutableStateOf(
@@ -286,7 +293,7 @@ fun BiliPlayerApp() {
 
     // 有列表开始播放（导入完成或点了库里的某一项）就进播放器
     LaunchedEffect(uiState.currentPlaylistId) {
-        if (uiState.currentPlaylistId.isNotEmpty() && uiState.playlist.isNotEmpty()) {
+        if (uiState.currentPlaylistId.isNotEmpty() && uiState.playlist.isNotEmpty() && !miniPlayer) {
             screen = AppScreen.PLAYER
         }
     }
@@ -318,6 +325,12 @@ fun BiliPlayerApp() {
             delay(500)
             PlayerController.enterFullscreen()
         }
+    }
+
+    // 冷启动先显示 splash，同时预加载推荐合集；完成后再进入主界面
+    if (immersiveMode && showSplash) {
+        ImmersiveSplashScreen(onReady = { showSplash = false })
+        return
     }
 
     Scaffold(
@@ -379,13 +392,25 @@ fun BiliPlayerApp() {
                                     onLoginClick = { showLogin = true },
                                     onBack = { screen = AppScreen.LIBRARY },
                                 )
-                                else -> if (immersiveMode) ImmersiveLibraryScreen(
+                                else -> if (immersiveMode) ImmersiveHome(
                                     playlists = library,
                                     uiState = uiState,
                                     currentPlaylistId = uiState.currentPlaylistId,
                                     stats = stats,
+                                    statsSelectedId = statsSelectedId,
+                                    onSelectStats = { statsSelectedId = it },
+                                    immersiveMode = immersiveMode,
+                                    onImmersiveModeChange = {
+                                        immersiveMode = it
+                                        Preferences.saveImmersiveMode(context, it)
+                                    },
+                                    checking = checkingUpdate,
+                                    checkResult = checkResult,
+                                    onCheckUpdate = checkForUpdates,
+                                    onOpenLogs = { showLogs = true },
                                     onImportClick = { screen = AppScreen.IMPORT },
                                     onPlay = {
+                                        miniPlayer = false
                                         PlayerService.start(context)
                                         PlayerController.playPlaylist(it)
                                     },
@@ -397,6 +422,24 @@ fun BiliPlayerApp() {
                                         if (uiState.currentPlaylistId == pl.id) {
                                             PlayerController.stop()
                                             PlayerService.stop(context)
+                                            miniPlayer = false
+                                        }
+                                    },
+                                    selectedTabIndex = immersiveTab,
+                                    onTabSelected = { immersiveTab = it },
+                                    showMiniPlayer = miniPlayer &&
+                                        !miniExpanding &&
+                                        uiState.currentBvid.isNotBlank(),
+                                    onExpandPlayer = {
+                                        if (!miniExpanding) {
+                                            miniExpanding = true
+                                            scope.launch {
+                                                // 先让迷你条下滑消失，再展开播放页
+                                                delay(180)
+                                                miniPlayer = false
+                                                miniExpanding = false
+                                                screen = AppScreen.PLAYER
+                                            }
                                         }
                                     }
                                 ) else LibraryScreen(
@@ -438,12 +481,10 @@ fun BiliPlayerApp() {
                                         uiState = uiState,
                                         lyricsEntry = lyrics[uiState.currentBvid],
                                         onOpenLyrics = openLyrics,
-                                        onOpenStats = { immersiveSub = ImmersiveSub.STATS },
-                                        onOpenSettings = { immersiveSub = ImmersiveSub.SETTINGS },
-                                        onOpenAbout = { immersiveSub = ImmersiveSub.ABOUT },
-                                        onBack = goBack,
-                                        // 沉浸模式是全局开关时，不提供"退出沉浸"
-                                        onExit = if (immersiveMode) null else ({ immersive = false }),
+                                        onCollapse = {
+                                            miniPlayer = true
+                                            screen = AppScreen.LIBRARY
+                                        },
                                         haze = playerHaze
                                     )
 

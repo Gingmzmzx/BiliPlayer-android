@@ -84,9 +84,10 @@ internal fun LiquidGlassScaffold(
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    // 页面可以自带状态：歌词等覆盖弹层需要复用播放页已经捕获的背景
+    // 页面可以自带状态：歌词等覆盖弹层需要复用播放页已经捕获的背景；
+    // 外层（如底部导航栏宿主）提供状态时优先复用，保证导航玻璃也能取到页面背景。
     val fallback = rememberHazeState()
-    val state = haze ?: fallback
+    val state = haze ?: LocalLiquidGlass.current ?: fallback
     CompositionLocalProvider(LocalLiquidGlass provides state) {
         Box(modifier.fillMaxSize().background(Ink)) {
             LiquidBackdrop(cover = cover, haze = state)

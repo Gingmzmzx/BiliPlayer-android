@@ -33,9 +33,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -63,6 +66,22 @@ internal object GlassMotion {
     val SheetSpring = spring<Float>(dampingRatio = 0.86f, stiffness = 420f)
 }
 
+/** 当前页面打开了多少个浮层；底部导航据此隐藏，避免压住抽屉。 */
+internal class GlassOverlayPresence {
+    var count by mutableIntStateOf(0)
+}
+
+internal val LocalGlassOverlayPresence = compositionLocalOf { GlassOverlayPresence() }
+
+@Composable
+private fun TrackOverlayPresence() {
+    val presence = LocalGlassOverlayPresence.current
+    DisposableEffect(Unit) {
+        presence.count++
+        onDispose { presence.count-- }
+    }
+}
+
 /**
  * 居中弹窗：淡入 + 轻微放大。
  * [content] 的 `close` 会先播完退场动画再调用调用方的 onDismiss。
@@ -74,6 +93,7 @@ internal fun GlassDialog(
     backEnabled: Boolean = true,
     content: @Composable (close: () -> Unit) -> Unit,
 ) {
+    TrackOverlayPresence()
     val scope = rememberCoroutineScope()
     var shown by remember { mutableStateOf(false) }
     var closing by remember { mutableStateOf(false) }
@@ -123,6 +143,7 @@ internal fun GlassBottomSheet(
     dismissOnOutside: Boolean = true,
     content: @Composable ColumnScope.(close: () -> Unit) -> Unit,
 ) {
+    TrackOverlayPresence()
     val scope = rememberCoroutineScope()
     var shown by remember { mutableStateOf(false) }
     var closing by remember { mutableStateOf(false) }
@@ -243,6 +264,7 @@ internal fun GlassSideDrawer(
     width: Dp = 280.dp,
     content: @Composable ColumnScope.(close: () -> Unit) -> Unit,
 ) {
+    TrackOverlayPresence()
     val scope = rememberCoroutineScope()
     var shown by remember { mutableStateOf(false) }
     var closing by remember { mutableStateOf(false) }
@@ -310,6 +332,7 @@ internal fun GlassSidePanel(
     dismissOnOutside: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    TrackOverlayPresence()
     val scope = rememberCoroutineScope()
     var shown by remember { mutableStateOf(false) }
     var closing by remember { mutableStateOf(false) }

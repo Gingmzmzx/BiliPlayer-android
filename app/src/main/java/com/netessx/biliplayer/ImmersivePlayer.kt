@@ -9,17 +9,21 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.provider.Settings
 import android.text.method.LinkMovementMethod
+import android.view.ViewGroup
 import android.widget.TextView
 import androidx.core.text.HtmlCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import kotlinx.coroutines.launch
 import android.graphics.Bitmap
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -67,13 +71,19 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -130,85 +140,6 @@ import java.net.URL
  *   顶部 = 视频（由外层 WebView 面板占位）
  *   下方 = 标题 → 滚动歌词 → 底部悬浮控制条
  */
-/** 沉浸界面的一整套配色，明暗两套随系统切换。 */
-internal data class ImmersiveColors(
-    val dark: Boolean,
-    val ink: Color,
-    val gradientTop: Color,
-    val gradientBottom: Color,
-    val textPrimary: Color,
-    val textMuted: Color,
-    val textDim: Color,
-    val glass: Color,
-    val glassBorder: Color,
-    val glassSoft: Color,
-    /** 旧系统没有 RenderEffect 时，玻璃面板退回的实心底色。 */
-    val glassFallback: Color,
-    /** 抽屉 / 弹窗的实心面板底色。 */
-    val panel: Color,
-    val panelAlt: Color,
-) {
-    companion object {
-        val Dark = ImmersiveColors(
-            dark = true,
-            ink = Color(0xFF07080C),
-            gradientTop = Color(0xFF141726),
-            gradientBottom = Color(0xFF07080C),
-            textPrimary = Color(0xFFF2F4FA),
-            textMuted = Color(0x99F2F4FA),
-            textDim = Color(0x59F2F4FA),
-            glass = Color(0x1CFFFFFF),
-            glassBorder = Color(0x2EFFFFFF),
-            glassSoft = Color(0x12FFFFFF),
-            glassFallback = Color(0xD9141720),
-            panel = Color(0xF2131620),
-            panelAlt = Color(0xF21A1D26),
-        )
-        val Light = ImmersiveColors(
-            dark = false,
-            ink = Color(0xFFF6F4F8),
-            gradientTop = Color(0xFFFFFFFF),
-            gradientBottom = Color(0xFFEFECF3),
-            textPrimary = Color(0xFF1B1720),
-            textMuted = Color(0x991B1720),
-            textDim = Color(0x551B1720),
-            glass = Color(0x52FFFFFF),
-            glassBorder = Color(0x3DFFFFFF),
-            glassSoft = Color(0x26FFFFFF),
-            glassFallback = Color(0xEFFFFFFF),
-            panel = Color(0xFAFFFFFF),
-            panelAlt = Color(0xFAF7F4FA),
-        )
-    }
-}
-
-/** 由 BiliPlayerApp 按系统明暗写入；读它的 composable 会自动重组。 */
-internal val immersiveColors = mutableStateOf(ImmersiveColors.Dark)
-
-fun setImmersiveDarkTheme(dark: Boolean) {
-    immersiveColors.value = if (dark) ImmersiveColors.Dark else ImmersiveColors.Light
-}
-
-internal val Ink: Color @Composable get() = immersiveColors.value.ink
-internal val GradientTop: Color @Composable get() = immersiveColors.value.gradientTop
-internal val GradientBottom: Color @Composable get() = immersiveColors.value.gradientBottom
-internal val TextPrimary: Color @Composable get() = immersiveColors.value.textPrimary
-internal val TextMuted: Color @Composable get() = immersiveColors.value.textMuted
-internal val TextDim: Color @Composable get() = immersiveColors.value.textDim
-internal val Glass: Color @Composable get() = immersiveColors.value.glass
-internal val GlassBorder: Color @Composable get() = immersiveColors.value.glassBorder
-internal val GlassSoft: Color @Composable get() = immersiveColors.value.glassSoft
-internal val Panel: Color @Composable get() = immersiveColors.value.panel
-internal val PanelAlt: Color @Composable get() = immersiveColors.value.panelAlt
-
-/** 固定的品牌粉，明暗通用。 */
-internal val Accent = Color(0xFFFB7299)
-
-/** 品牌粉上的前景色：固定深色，浅色主题下也能保证对比。 */
-internal val OnAccent = Color(0xFF230A12)
-
-/** Canvas（DrawScope）里不能调用 @Composable getter，图标统一用中性灰。 */
-internal val Glyph = Color(0xFF8E93A0)
 
 /**
  * 歌词滚动的动画曲线：偏低阻尼的弹簧，到位时轻微回弹，做出「Q 弹」的手感。
@@ -224,16 +155,11 @@ fun ImmersivePlayerScreen(
     uiState: PlayerUiState,
     lyricsEntry: LyricsEntry?,
     onOpenLyrics: () -> Unit,
-    onOpenStats: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onOpenAbout: () -> Unit,
-    onBack: () -> Unit,
-    onExit: (() -> Unit)? = null,
+    onCollapse: () -> Unit,
     haze: HazeState? = null,
 ) {
     var showTimerPanel by remember { mutableStateOf(false) }
     var showPlaylist by remember { mutableStateOf(false) }
-    var showMenu by remember { mutableStateOf(false) }
     var showVolume by remember { mutableStateOf(false) }
     var prefIndex by remember { mutableStateOf<Int?>(null) }
     val lines = remember(lyricsEntry?.bvid, lyricsEntry?.synced, lyricsEntry?.plain) {
@@ -246,18 +172,52 @@ fun ImmersivePlayerScreen(
 
     // 返回键优先关闭当前浮层，而不是直接退出播放器
     BackHandler(
-        enabled = showTimerPanel || showPlaylist || showMenu || showVolume || prefIndex != null
+        enabled = showTimerPanel || showPlaylist || showVolume || prefIndex != null
     ) {
         when {
             prefIndex != null -> prefIndex = null
             showVolume -> showVolume = false
-            showMenu -> showMenu = false
             showPlaylist -> showPlaylist = false
             showTimerPanel -> showTimerPanel = false
         }
     }
 
+    // 从迷你条展开、收回迷你条都用同一套上下滑动动画
+    var visible by remember { mutableStateOf(false) }
+    var collapsing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val collapse: () -> Unit = {
+        if (!collapsing) {
+            collapsing = true
+            visible = false
+            scope.launch {
+                delay(200)
+                onCollapse()
+            }
+        }
+    }
+    LaunchedEffect(Unit) { visible = true }
+
     LiquidGlassScaffold(cover = uiState.currentCover, haze = haze) {
+        // 背景始终在，避免播放页入场前闪一帧白屏；只对内容做展开动画
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(tween(170)) +
+                slideInVertically(
+                    animationSpec = spring(dampingRatio = 0.82f, stiffness = 360f)
+                ) { it / 4 } +
+                scaleIn(
+                    initialScale = 0.94f,
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
+                ),
+            exit = fadeOut(tween(150)) +
+                slideOutVertically(tween(200)) { it / 4 } +
+                scaleOut(
+                    targetScale = 0.94f,
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
+                )
+        ) {
+        Box(Modifier.fillMaxSize()) {
 
         Column(
             Modifier
@@ -275,6 +235,8 @@ fun ImmersivePlayerScreen(
                 ) {
                     Column(Modifier.weight(0.42f).fillMaxHeight()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircleBackButton(collapse)
+                            Spacer(Modifier.width(12.dp))
                             Box(
                                 Modifier
                                     .size(88.dp)
@@ -305,8 +267,6 @@ fun ImmersivePlayerScreen(
                                     style = TextStyle(color = TextDim, fontSize = 10.sp, letterSpacing = 1.1.sp)
                                 )
                             }
-                            Spacer(Modifier.width(8.dp))
-                            CircleMenuButton { showMenu = true }
                         }
                         Spacer(Modifier.weight(1f))
                         FloatingControls(
@@ -333,6 +293,8 @@ fun ImmersivePlayerScreen(
                 // 竖屏：标题（右侧菜单按钮）→ 歌词 → 底部悬浮控制条
                 Spacer(Modifier.height(22.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircleBackButton(collapse)
+                    Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         BasicText(
                             uiState.currentTitle.ifBlank { "加载中…" },
@@ -352,8 +314,6 @@ fun ImmersivePlayerScreen(
                             style = TextStyle(color = TextDim, fontSize = 11.sp, letterSpacing = 1.2.sp)
                         )
                     }
-                    Spacer(Modifier.width(12.dp))
-                    CircleMenuButton { showMenu = true }
                 }
                 Spacer(Modifier.height(18.dp))
 
@@ -409,22 +369,6 @@ fun ImmersivePlayerScreen(
             }
         }
 
-        // ---------- 右侧菜单 ----------
-        if (showMenu) {
-            GlassSideDrawer(
-                onDismiss = { showMenu = false },
-                width = 262.dp
-            ) { close ->
-                ImmersiveMenuPanel(
-                    onStats = { close(); onOpenStats() },
-                    onSettings = { close(); onOpenSettings() },
-                    onAbout = { close(); onOpenAbout() },
-                    onExit = onExit?.let { { close(); it() } },
-                    onBackToList = { close(); onBack() }
-                )
-            }
-        }
-
         // ---------- 音量 ----------
         if (showVolume) {
             GlassSidePanel(
@@ -447,6 +391,35 @@ fun ImmersivePlayerScreen(
                     )
                 }
             }
+        }
+        }
+    }
+    }
+}
+
+/** 左上角圆形返回按钮：收起播放页，回到带底部导航的主界面。 */
+@Composable
+private fun CircleBackButton(onClick: () -> Unit) {
+    LiquidCircleButton(size = 44.dp, onClick = onClick) {
+        val iconColor = TextPrimary
+        Canvas(Modifier.size(18.dp)) {
+            val w = size.width
+            val h = size.height
+            val stroke = 2.dp.toPx()
+            drawLine(
+                iconColor,
+                Offset(w * 0.72f, h * 0.15f),
+                Offset(w * 0.30f, h * 0.5f),
+                stroke,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round
+            )
+            drawLine(
+                iconColor,
+                Offset(w * 0.30f, h * 0.5f),
+                Offset(w * 0.72f, h * 0.85f),
+                stroke,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round
+            )
         }
     }
 }
@@ -902,34 +875,6 @@ private fun PrefSheet(index: Int, track: BiliTrack, onDismiss: () -> Unit) {
         }
 }
 
-/** 无 Material 的输入框：底色块 + BasicTextField。 */
-@Composable
-private fun BareField(placeholder: String, value: String, onValueChange: (String) -> Unit) {
-    BasicTextField(
-        value = value,
-        onValueChange = onValueChange,
-        singleLine = true,
-        textStyle = TextStyle(color = TextPrimary, fontSize = 14.sp),
-        cursorBrush = Brush.verticalGradient(listOf(Accent, Accent)),
-        modifier = Modifier
-            .fillMaxWidth()
-            .liquidGlass(
-                shape = RoundedCornerShape(12.dp),
-                blurRadius = 14.dp,
-                elevation = 0.dp
-            )
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        decorationBox = { inner ->
-            Box {
-                if (value.isEmpty()) {
-                    BasicText(placeholder, style = TextStyle(color = TextDim, fontSize = 13.sp))
-                }
-                inner()
-            }
-        }
-    )
-}
-
 /** 定时关闭浮层：时长 + 到点暂停/退出，全部自绘。 */
 @Composable
 private fun TimerPanel(
@@ -1017,22 +962,6 @@ private fun TimerPanel(
             modifier = Modifier.align(Alignment.CenterHorizontally)
         )
     }
-}
-
-/** 沉浸页顶部的大号胶囊按钮：半透明底 + 细描边，比纯文字更有质感。 */
-@Composable
-private fun ImmersiveChip(text: String, onClick: () -> Unit) {
-    LiquidPill(text, onClick = onClick)
-}
-
-/** 只有文字、没有 Material 背景的小按钮。 */
-@Composable
-private fun GhostLabel(text: String, onClick: () -> Unit) {
-    BasicText(
-        text,
-        style = TextStyle(color = TextMuted, fontSize = 12.sp, letterSpacing = 0.8.sp),
-        modifier = Modifier.clickable { onClick() }
-    )
 }
 
 /** 加载封面并绘制；失败/为空时保持透明，让渐变层兜底。 */
@@ -1407,18 +1336,6 @@ private fun PlaylistButton(onClick: () -> Unit) {
     }
 }
 
-/** 控制条上的小胶囊按钮（自绘，不用 Material Chip）。 */
-@Composable
-private fun Pill(
-    text: String,
-    highlighted: Boolean = false,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    LiquidPill(text = text, highlighted = highlighted, enabled = enabled, onClick = onClick)
-}
-
-
 private enum class Transport { PREV, PLAY, PAUSE, NEXT }
 
 /** 用 Canvas 画播放控制图标，避免引入 Material 图标。 */
@@ -1502,12 +1419,6 @@ private fun TransportButton(kind: Transport, size: Dp, onClick: () -> Unit) {
             }
         }
     }
-}
-
-private fun formatClock(seconds: Double): String {
-    if (seconds <= 0 || seconds.isNaN()) return "00:00"
-    val total = seconds.toLong()
-    return "%02d:%02d".format(total / 60, total % 60)
 }
 
 // ======================================================================
@@ -1743,6 +1654,8 @@ fun ImmersiveStatsScreen(
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.systemBars)
                 .padding(horizontal = 18.dp, vertical = 14.dp)
+                // 和关于 / 设置一样：内容止于悬浮导航上方，不钻到栏底下
+                .padding(bottom = LocalImmersiveBottomSpace.current)
         ) {
             Header()
 
@@ -1842,29 +1755,6 @@ private fun CoverTreemap(
 // ======================================================================
 // 沉浸式导入 / 登录页
 // ======================================================================
-
-/** 带标签的输入框（自绘，无 Material）。 */
-@Composable
-private fun ImmersiveField(label: String, value: String, onChange: (String) -> Unit) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        BasicText(label, style = TextStyle(color = TextMuted, fontSize = 11.sp))
-        BasicTextField(
-            value = value,
-            onValueChange = onChange,
-            singleLine = true,
-            textStyle = TextStyle(color = TextPrimary, fontSize = 15.sp),
-            cursorBrush = Brush.verticalGradient(listOf(Accent, Accent)),
-            modifier = Modifier
-                .fillMaxWidth()
-                .liquidGlass(
-                    shape = RoundedCornerShape(14.dp),
-                    blurRadius = 16.dp,
-                    elevation = 0.dp
-                )
-                .padding(horizontal = 14.dp, vertical = 12.dp)
-        )
-    }
-}
 
 @Composable
 fun ImmersiveImportScreen(
@@ -2051,6 +1941,937 @@ private fun fmtDate(ms: Long): String {
     }.getOrDefault("")
 }
 
+/** 冷启动 splash：预加载推荐合集，加载完成后进入主界面。 */
+@Composable
+fun ImmersiveSplashScreen(onReady: () -> Unit) {
+    val context = LocalContext.current
+    val state by RecommendStore.state.collectAsState()
+    var started by remember { mutableStateOf(false) }
+    val host = (context as? android.app.Activity)?.window?.decorView as? ViewGroup
+
+    LaunchedEffect(Unit) {
+        RecommendStore.init(context)
+        RecommendStore.ensureLoaded(host)
+        started = true
+    }
+    LaunchedEffect(started, state.loading, state.items.size, state.error) {
+        if (started && !state.loading) {
+            delay(650)
+            onReady()
+        }
+    }
+
+    LiquidGlassScaffold {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(horizontal = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            BasicText(
+                "BiliPlayer",
+                style = TextStyle(
+                    color = TextPrimary,
+                    fontSize = 34.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.5.sp
+                )
+            )
+            Spacer(Modifier.height(6.dp))
+            BasicText(
+                "Liquid Glass",
+                style = TextStyle(
+                    color = Accent,
+                    fontSize = 12.sp,
+                    letterSpacing = 3.sp
+                )
+            )
+            Spacer(Modifier.height(30.dp))
+            BasicText(
+                state.progress ?: "正在准备推荐内容…",
+                style = TextStyle(color = TextMuted, fontSize = 12.sp, textAlign = TextAlign.Center)
+            )
+            state.error?.let {
+                Spacer(Modifier.height(10.dp))
+                BasicText(
+                    it,
+                    style = TextStyle(
+                        color = Color(0xFFFF8A8A),
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center
+                    )
+                )
+                Spacer(Modifier.height(10.dp))
+                LiquidPill("重试") { RecommendStore.refresh(host) }
+            }
+            Spacer(Modifier.height(24.dp))
+            LiquidPill("跳过等待") { onReady() }
+        }
+    }
+}
+
+/** 底部导航 +（可选）迷你播放条占用的高度，由宿主页提供。 */
+internal val LocalImmersiveBottomSpace = androidx.compose.runtime.compositionLocalOf { 0.dp }
+
+internal enum class ImmersiveTab(val label: String) {
+    RECOMMEND("推荐"),
+    LIBRARY("歌单"),
+    STATS("统计"),
+    SETTINGS("设置"),
+    ABOUT("关于"),
+}
+
+/** 沉浸式主界面：五个一级页面 + Liquid Glass 底部导航。 */
+@Composable
+fun ImmersiveHome(
+    playlists: List<Playlist>,
+    uiState: PlayerUiState,
+    currentPlaylistId: String,
+    stats: Map<String, Map<String, Long>>,
+    statsSelectedId: String?,
+    onSelectStats: (String) -> Unit,
+    immersiveMode: Boolean,
+    onImmersiveModeChange: (Boolean) -> Unit,
+    checking: Boolean,
+    checkResult: String?,
+    onCheckUpdate: () -> Unit,
+    onOpenLogs: () -> Unit,
+    onImportClick: () -> Unit,
+    onPlay: (Playlist) -> Unit,
+    onSync: (Playlist) -> Unit,
+    onRename: (Playlist, String) -> Unit,
+    onDelete: (Playlist) -> Unit,
+    selectedTabIndex: Int = 0,
+    onTabSelected: (Int) -> Unit = {},
+    showMiniPlayer: Boolean = false,
+    onExpandPlayer: () -> Unit = {},
+) {
+    val tab = ImmersiveTab.entries[
+        selectedTabIndex.coerceIn(0, ImmersiveTab.entries.lastIndex)
+    ]
+    val haze = rememberLiquidGlassState()
+    val overlayPresence = remember { GlassOverlayPresence() }
+
+    CompositionLocalProvider(
+        LocalLiquidGlass provides haze,
+        LocalGlassOverlayPresence provides overlayPresence,
+        LocalImmersiveBottomSpace provides if (showMiniPlayer) 170.dp else 96.dp
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            AnimatedContent(
+                targetState = tab,
+                transitionSpec = {
+                    val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
+                    (slideInHorizontally(animationSpec = tween(280)) { dir * it / 4 } +
+                        fadeIn(tween(220)) +
+                        scaleIn(initialScale = 0.97f)) togetherWith
+                        (slideOutHorizontally(animationSpec = tween(220)) { -dir * it / 4 } +
+                            fadeOut(tween(160)) +
+                            scaleOut(targetScale = 0.97f))
+                },
+                modifier = Modifier.fillMaxSize(),
+                label = "immersiveTab"
+            ) { current ->
+                when (current) {
+                    ImmersiveTab.RECOMMEND -> RecommendHomeScreen()
+                    ImmersiveTab.LIBRARY -> ImmersiveLibraryScreen(
+                        playlists = playlists,
+                        uiState = uiState,
+                        currentPlaylistId = currentPlaylistId,
+                        stats = stats,
+                        onImportClick = onImportClick,
+                        onPlay = onPlay,
+                        onSync = onSync,
+                        onRename = onRename,
+                        onDelete = onDelete
+                    )
+                    ImmersiveTab.STATS -> ImmersiveStatsScreen(
+                        playlists = playlists,
+                        stats = stats,
+                        selectedId = statsSelectedId,
+                        onSelect = onSelectStats
+                    )
+                    ImmersiveTab.SETTINGS -> ImmersiveSettingsScreen(
+                        immersiveMode = immersiveMode,
+                        onImmersiveModeChange = onImmersiveModeChange
+                    )
+                    ImmersiveTab.ABOUT -> ImmersiveAboutScreen(
+                        checking = checking,
+                        checkResult = checkResult,
+                        onCheckUpdate = onCheckUpdate,
+                        onOpenLogs = onOpenLogs
+                    )
+                }
+            }
+
+            AnimatedVisibility(
+                visible = overlayPresence.count == 0,
+                enter = fadeIn(tween(150)),
+                exit = fadeOut(tween(120)),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.navigationBars)
+            ) {
+                Column(Modifier.fillMaxWidth()) {
+                    AnimatedVisibility(
+                        visible = showMiniPlayer,
+                        enter = slideInVertically(
+                            animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f)
+                        ) { it / 2 } +
+                            fadeIn(tween(140)) +
+                            scaleIn(
+                                initialScale = 0.90f,
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
+                            ),
+                        exit = slideOutVertically(tween(180)) { it / 2 } +
+                            fadeOut(tween(120)) +
+                            scaleOut(
+                                targetScale = 0.90f,
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
+                            )
+                    ) {
+                        Column {
+                            MiniPlayerBar(uiState = uiState, onExpand = onExpandPlayer)
+                            Spacer(Modifier.height(6.dp))
+                        }
+                    }
+                    ImmersiveBottomNav(
+                        selected = tab,
+                        onSelect = { onTabSelected(it.ordinal) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 收起播放页后的迷你播放条，贴在底部导航上方。 */
+@Composable
+private fun MiniPlayerBar(uiState: PlayerUiState, onExpand: () -> Unit) {
+    val lyric = uiState.currentLyricLine
+    val title = uiState.currentTitle.ifBlank { "未在播放" }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp)
+            .liquidGlass(
+                shape = RoundedCornerShape(24.dp),
+                blurRadius = 26.dp,
+                elevation = 14.dp
+            )
+            .liquidPress(onClick = onExpand)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(GlassSoft)
+        ) {
+            if (uiState.currentCover.isNotBlank()) {
+                CoverBitmap(uiState.currentCover, Modifier.fillMaxSize())
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            BasicText(
+                lyric.ifBlank { title },
+                style = TextStyle(
+                    color = TextPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            BasicText(
+                if (lyric.isNotBlank()) title else "正在播放",
+                style = TextStyle(color = TextMuted, fontSize = 9.sp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        LiquidCircleButton(size = 34.dp, onClick = { PlayerController.playPause() }) {
+            val iconColor = TextPrimary
+            Canvas(Modifier.size(14.dp)) {
+                val w = size.width
+                val h = size.height
+                if (uiState.isPlaying) {
+                    drawRoundRect(
+                        iconColor,
+                        topLeft = Offset(w * 0.18f, 0f),
+                        size = Size(w * 0.24f, h),
+                        cornerRadius = CornerRadius(2f)
+                    )
+                    drawRoundRect(
+                        iconColor,
+                        topLeft = Offset(w * 0.58f, 0f),
+                        size = Size(w * 0.24f, h),
+                        cornerRadius = CornerRadius(2f)
+                    )
+                } else {
+                    drawPath(
+                        Path().apply {
+                            moveTo(w * 0.20f, 0f)
+                            lineTo(w, h / 2f)
+                            lineTo(w * 0.20f, h)
+                            close()
+                        },
+                        iconColor
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.width(4.dp))
+        LiquidCircleButton(size = 34.dp, onClick = { PlayerController.next() }) {
+            val iconColor = TextPrimary
+            Canvas(Modifier.size(14.dp)) {
+                val w = size.width
+                val h = size.height
+                drawPath(
+                    Path().apply {
+                        moveTo(w * 0.08f, 0f)
+                        lineTo(w * 0.55f, h / 2f)
+                        lineTo(w * 0.08f, h)
+                        close()
+                    },
+                    iconColor
+                )
+                drawPath(
+                    Path().apply {
+                        moveTo(w * 0.52f, 0f)
+                        lineTo(w, h / 2f)
+                        lineTo(w * 0.52f, h)
+                        close()
+                    },
+                    iconColor
+                )
+                drawRoundRect(
+                    iconColor,
+                    topLeft = Offset(w * 0.86f, 0f),
+                    size = Size(w * 0.12f, h),
+                    cornerRadius = CornerRadius(2f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImmersiveBottomNav(
+    selected: ImmersiveTab,
+    onSelect: (ImmersiveTab) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .liquidGlass(
+                shape = GlassCapsule,
+                blurRadius = 28.dp,
+                elevation = 18.dp
+            )
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceEvenly
+    ) {
+        ImmersiveTab.entries.forEach { tab ->
+            val active = tab == selected
+            val color = if (active) Accent else TextMuted
+            Column(
+                Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(if (active) Accent.copy(alpha = 0.12f) else Color.Transparent)
+                    .liquidPress(onClick = { onSelect(tab) })
+                    .padding(vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Canvas(Modifier.size(20.dp)) { drawNavGlyph(tab, color) }
+                Spacer(Modifier.height(2.dp))
+                BasicText(
+                    tab.label,
+                    style = TextStyle(
+                        color = color,
+                        fontSize = 10.sp,
+                        fontWeight = if (active) FontWeight.Medium else FontWeight.Normal
+                    )
+                )
+                Spacer(Modifier.height(2.dp))
+                Box(
+                    Modifier
+                        .size(4.dp)
+                        .clip(CircleShape)
+                        .background(if (active) Accent else Color.Transparent)
+                )
+            }
+        }
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawNavGlyph(
+    tab: ImmersiveTab,
+    color: Color,
+) {
+    val w = size.width
+    val h = size.height
+    val stroke = 1.7.dp.toPx()
+    when (tab) {
+        ImmersiveTab.RECOMMEND -> {
+            drawCircle(color, radius = w * 0.36f, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+            drawPath(
+                Path().apply {
+                    moveTo(w * 0.70f, h * 0.10f)
+                    lineTo(w * 0.80f, h * 0.30f)
+                    lineTo(w * 1.00f, h * 0.40f)
+                    lineTo(w * 0.80f, h * 0.50f)
+                    lineTo(w * 0.70f, h * 0.70f)
+                    lineTo(w * 0.60f, h * 0.50f)
+                    lineTo(w * 0.40f, h * 0.40f)
+                    lineTo(w * 0.60f, h * 0.30f)
+                    close()
+                },
+                color
+            )
+        }
+        ImmersiveTab.LIBRARY -> {
+            listOf(0.22f, 0.5f, 0.78f).forEach { fy ->
+                drawCircle(color, radius = stroke * 0.8f, center = Offset(w * 0.14f, h * fy))
+                drawLine(color, Offset(w * 0.30f, h * fy), Offset(w * 0.88f, h * fy), stroke)
+            }
+        }
+        ImmersiveTab.STATS -> {
+            drawLine(color, Offset(w * 0.18f, h * 0.82f), Offset(w * 0.18f, h * 0.52f), stroke * 1.8f)
+            drawLine(color, Offset(w * 0.50f, h * 0.82f), Offset(w * 0.50f, h * 0.28f), stroke * 1.8f)
+            drawLine(color, Offset(w * 0.82f, h * 0.82f), Offset(w * 0.82f, h * 0.44f), stroke * 1.8f)
+        }
+        ImmersiveTab.SETTINGS -> {
+            listOf(0.32f, 0.68f).forEachIndexed { i, fy ->
+                drawLine(color, Offset(w * 0.12f, h * fy), Offset(w * 0.88f, h * fy), stroke)
+                drawCircle(
+                    color,
+                    radius = stroke * 1.4f,
+                    center = Offset(w * (if (i == 0) 0.36f else 0.64f), h * fy)
+                )
+            }
+        }
+        ImmersiveTab.ABOUT -> {
+            drawCircle(color, radius = w * 0.38f, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+            drawCircle(color, radius = stroke * 0.9f, center = Offset(w * 0.5f, h * 0.30f))
+            drawLine(color, Offset(w * 0.5f, h * 0.44f), Offset(w * 0.5f, h * 0.70f), stroke)
+        }
+    }
+}
+
+/**
+ * 推荐合集页：固定来源，抓取该 UP 的全部合集，先做粗略展示。
+ */
+@Composable
+fun ImmersiveRecommendScreen() {
+    val context = LocalContext.current
+    val host = (context as? android.app.Activity)?.window?.decorView as? ViewGroup
+    val state by RecommendStore.state.collectAsState()
+    LaunchedEffect(Unit) {
+        RecommendStore.init(context)
+        RecommendStore.ensureLoaded(host as? ViewGroup)
+    }
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val columns = if (landscape) 3 else 2
+
+    LiquidGlassScaffold {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    BasicText(
+                        "推荐合集",
+                        style = TextStyle(color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    )
+                    BasicText(
+                        "固定来源 · JLRS-LeoFM",
+                        style = TextStyle(color = TextMuted, fontSize = 11.sp)
+                    )
+                }
+                Pill(
+                    "刷新",
+                    enabled = !state.loading,
+                    onClick = { RecommendStore.refresh(host as? ViewGroup) }
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            state.progress?.let {
+                BasicText(it, style = TextStyle(color = Accent, fontSize = 12.sp))
+                Spacer(Modifier.height(8.dp))
+            }
+            if (state.loading) {
+                BasicText(
+                    "首次抓取需要等页面渲染，请稍候…",
+                    style = TextStyle(color = TextMuted, fontSize = 11.sp)
+                )
+                Spacer(Modifier.height(8.dp))
+            }
+            state.error?.let {
+                BasicText(it, style = TextStyle(color = Color(0xFFFF8A8A), fontSize = 12.sp))
+                Spacer(Modifier.height(8.dp))
+            }
+
+            if (state.items.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    BasicText(
+                        if (state.loading) "正在抓取合集…" else "暂无推荐内容",
+                        style = TextStyle(color = TextMuted, fontSize = 13.sp, textAlign = TextAlign.Center)
+                    )
+                }
+            } else {
+                LazyColumn(
+                    Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    itemsIndexed(state.items.chunked(columns)) { _, row ->
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            row.forEach { item ->
+                                RecommendCard(item, Modifier.weight(1f))
+                            }
+                            repeat(columns - row.size) {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                    item { Spacer(Modifier.height(LocalImmersiveBottomSpace.current + 12.dp)) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecommendCard(item: RecommendItem, modifier: Modifier) {
+    val context = LocalContext.current
+    Column(
+        modifier
+            .liquidPress(onClick = {
+                runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.url)))
+                }
+            })
+            .liquidGlass(
+                shape = RoundedCornerShape(20.dp),
+                blurRadius = 20.dp,
+                elevation = 6.dp
+            )
+            .padding(8.dp)
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(14.dp))
+                .background(GlassSoft)
+        ) {
+            if (item.cover.isNotBlank()) {
+                CoverBitmap(item.cover, Modifier.fillMaxSize())
+            }
+            if (item.count > 0) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(6.dp)
+                        .clip(GlassCapsule)
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                ) {
+                    BasicText(
+                        "${item.count} 个视频",
+                        style = TextStyle(color = Color.White, fontSize = 9.sp)
+                    )
+                }
+            }
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .clip(GlassCapsule)
+                    .background(Accent.copy(alpha = 0.78f))
+                    .padding(horizontal = 6.dp, vertical = 3.dp)
+            ) {
+                BasicText(
+                    item.type,
+                    style = TextStyle(
+                        color = OnAccent,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        BasicText(
+            item.title,
+            style = TextStyle(
+                color = TextPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                lineHeight = 18.sp
+            ),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(Modifier.height(3.dp))
+        BasicText("打开 B 站合集", style = TextStyle(color = TextDim, fontSize = 10.sp))
+    }
+}
+
+/** 推荐页：顶部“私人致享2.0”轮播，下面按合集展示最新视频。 */
+@Composable
+fun RecommendHomeScreen() {
+    val context = LocalContext.current
+    val state by RecommendStore.state.collectAsState()
+    LaunchedEffect(Unit) {
+        RecommendStore.init(context)
+        RecommendStore.ensureLoaded(
+            (context as? android.app.Activity)?.window?.decorView as? ViewGroup
+        )
+    }
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val columns = if (landscape) 3 else 2
+
+    LiquidGlassScaffold {
+        val detail = state.detail
+        if (detail != null) {
+            RecommendDetailPage(detail = detail, columns = columns)
+        } else {
+            RecommendListPage(state = state, columns = columns, landscape = landscape)
+        }
+    }
+}
+
+@Composable
+private fun RecommendListPage(
+    state: RecommendState,
+    columns: Int,
+    landscape: Boolean,
+) {
+    val context = LocalContext.current
+    Column(
+        Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.systemBars)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                BasicText(
+                    "推荐合集",
+                    style = TextStyle(color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                )
+                BasicText(
+                    "固定来源 · JLRS-LeoFM",
+                    style = TextStyle(color = TextMuted, fontSize = 11.sp)
+                )
+            }
+            Pill("刷新", enabled = !state.loading, onClick = {
+                RecommendStore.refresh(
+                    (context as? android.app.Activity)?.window?.decorView as? ViewGroup
+                )
+            })
+        }
+
+        state.progress?.let {
+            Spacer(Modifier.height(8.dp))
+            BasicText(it, style = TextStyle(color = Accent, fontSize = 11.sp))
+        }
+        state.error?.let {
+            Spacer(Modifier.height(8.dp))
+            BasicText(it, style = TextStyle(color = Color(0xFFFF8A8A), fontSize = 12.sp))
+        }
+
+        if (state.items.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                BasicText(
+                    if (state.loading) "正在抓取合集…" else "暂无推荐内容",
+                    style = TextStyle(color = TextMuted, fontSize = 13.sp, textAlign = TextAlign.Center)
+                )
+            }
+            return@Column
+        }
+
+        val featured = state.items.firstOrNull { it.title == "私人致享2.0" }
+            ?: state.items.firstOrNull { it.videos.isNotEmpty() }
+        val others = state.items.filter { it.id != featured?.id }
+
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            val featuredVideos = featured?.videos.orEmpty()
+            if (featuredVideos.isNotEmpty()) {
+                item {
+                    FeaturedCarousel(
+                        videos = featuredVideos,
+                        height = if (landscape) 220.dp else 200.dp
+                    )
+                }
+            }
+            itemsIndexed(others, key = { _, item -> item.id }) { _, item ->
+                RecommendCollectionSection(item) {
+                    RecommendStore.openCollection(item)
+                }
+            }
+            item { Spacer(Modifier.height(LocalImmersiveBottomSpace.current + 16.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun FeaturedCarousel(videos: List<RecommendVideo>, height: Dp) {
+    val context = LocalContext.current
+    val pagerState = rememberPagerState(pageCount = { videos.size })
+    LaunchedEffect(videos.size) {
+        if (videos.size <= 1) return@LaunchedEffect
+        while (true) {
+            delay(4200)
+            if (!pagerState.isScrollInProgress) {
+                pagerState.animateScrollToPage((pagerState.currentPage + 1) % videos.size)
+            }
+        }
+    }
+
+    Column {
+        HorizontalPager(
+            state = pagerState,
+            pageSpacing = 10.dp,
+            modifier = Modifier.fillMaxWidth().height(height)
+        ) { page ->
+            val video = videos[page]
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(26.dp))
+                    .liquidPress(onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(video.url)))
+                        }
+                    })
+            ) {
+                CoverBitmap(video.cover, Modifier.fillMaxSize())
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f)),
+                            startY = 0f
+                        )
+                    )
+                )
+                Column(
+                    Modifier.align(Alignment.BottomStart).padding(16.dp)
+                ) {
+                    BasicText(
+                        "私人致享2.0",
+                        style = TextStyle(
+                            color = Accent,
+                            fontSize = 10.sp,
+                            letterSpacing = 1.4.sp
+                        )
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    BasicText(
+                        video.title.ifBlank { video.bvid },
+                        style = TextStyle(
+                            color = Color.White,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            lineHeight = 22.sp
+                        ),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            videos.indices.forEach { i ->
+                Box(
+                    Modifier
+                        .padding(horizontal = 2.dp)
+                        .size(if (i == pagerState.currentPage) 6.dp else 4.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (i == pagerState.currentPage) Accent
+                            else TextDim.copy(alpha = 0.45f)
+                        )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecommendCollectionSection(
+    item: RecommendItem,
+    onOpen: () -> Unit,
+) {
+    Column {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .liquidPress(onClick = onOpen)
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                BasicText(
+                    item.title,
+                    style = TextStyle(
+                        color = TextPrimary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                BasicText(
+                    "${item.count} 个视频 · ${item.type}",
+                    style = TextStyle(color = TextMuted, fontSize = 10.sp)
+                )
+            }
+            BasicText("查看全部 ›", style = TextStyle(color = Accent, fontSize = 11.sp))
+        }
+        Spacer(Modifier.height(6.dp))
+        if (item.videos.isEmpty()) {
+            BasicText("暂无视频预览", style = TextStyle(color = TextDim, fontSize = 11.sp))
+        } else {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                itemsIndexed(item.videos) { _, video ->
+                    RecommendVideoCard(video, Modifier.width(154.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecommendVideoCard(video: RecommendVideo, modifier: Modifier) {
+    val context = LocalContext.current
+    Column(
+        modifier
+            .liquidPress(onClick = {
+                runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(video.url)))
+                }
+            })
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(14.dp))
+                .background(GlassSoft)
+        ) {
+            if (video.cover.isNotBlank()) {
+                CoverBitmap(video.cover, Modifier.fillMaxSize())
+            }
+        }
+        Spacer(Modifier.height(5.dp))
+        BasicText(
+            video.title.ifBlank { video.bvid },
+            style = TextStyle(color = TextPrimary, fontSize = 11.sp, lineHeight = 15.sp),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun RecommendDetailPage(detail: RecommendDetail, columns: Int) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.systemBars)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ImmersiveChip("← 返回") { RecommendStore.closeDetail() }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                BasicText(
+                    detail.title,
+                    style = TextStyle(
+                        color = TextPrimary,
+                        fontSize = 21.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                BasicText(
+                    "${detail.videos.size} 个视频",
+                    style = TextStyle(color = TextMuted, fontSize = 10.sp)
+                )
+            }
+        }
+
+        detail.progress?.let {
+            Spacer(Modifier.height(8.dp))
+            BasicText(it, style = TextStyle(color = Accent, fontSize = 11.sp))
+        }
+        detail.error?.let {
+            Spacer(Modifier.height(8.dp))
+            BasicText(it, style = TextStyle(color = Color(0xFFFF8A8A), fontSize = 12.sp))
+        }
+
+        if (detail.videos.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                BasicText(
+                    if (detail.loading) "正在抓取合集全部视频…" else "暂无视频",
+                    style = TextStyle(color = TextMuted, fontSize = 13.sp, textAlign = TextAlign.Center)
+                )
+            }
+            return@Column
+        }
+
+        Spacer(Modifier.height(10.dp))
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            itemsIndexed(detail.videos.chunked(columns)) { _, row ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    row.forEach { video ->
+                        RecommendVideoCard(video, Modifier.weight(1f))
+                    }
+                    repeat(columns - row.size) {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(LocalImmersiveBottomSpace.current + 16.dp)) }
+        }
+    }
+}
+
 @Composable
 fun ImmersiveLibraryScreen(
     playlists: List<Playlist>,
@@ -2196,6 +3017,9 @@ fun ImmersiveLibraryScreen(
                         }
                         CircleMenuButton { menuFor = pl.id }
                     }
+                }
+                item {
+                    Spacer(Modifier.height(LocalImmersiveBottomSpace.current + 12.dp))
                 }
             }
         }
@@ -2718,7 +3542,7 @@ fun ImmersiveAboutScreen(
     checkResult: String? = null,
     onCheckUpdate: () -> Unit = {},
     onOpenLogs: () -> Unit = {},
-    onBack: () -> Unit,
+    onBack: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     fun open(url: String) {
@@ -2733,8 +3557,10 @@ fun ImmersiveAboutScreen(
         @Composable
         fun Header() {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                ImmersiveChip("← 返回", onBack)
-                Spacer(Modifier.width(10.dp))
+                if (onBack != null) {
+                    ImmersiveChip("← 返回", onBack)
+                    Spacer(Modifier.width(10.dp))
+                }
                 BasicText(
                     "关于",
                     style = TextStyle(color = TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
@@ -2838,6 +3664,7 @@ fun ImmersiveAboutScreen(
                     ) {
                         IdentitySection()
                         DiagnosticsSection()
+                        Spacer(Modifier.height(LocalImmersiveBottomSpace.current))
                     }
                     Column(
                         Modifier
@@ -2848,6 +3675,7 @@ fun ImmersiveAboutScreen(
                     ) {
                         LyricsSection()
                         LinksSection()
+                        Spacer(Modifier.height(LocalImmersiveBottomSpace.current))
                     }
                 }
             }
@@ -2865,102 +3693,10 @@ fun ImmersiveAboutScreen(
                 LyricsSection()
                 DiagnosticsSection()
                 LinksSection()
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(LocalImmersiveBottomSpace.current + 24.dp))
             }
         }
     }
-}
-
-@Composable
-private fun ImmersiveSection(text: String) {
-    Spacer(Modifier.height(10.dp))
-    BasicText(
-        text,
-        style = TextStyle(color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-    )
-}
-
-@Composable
-private fun ImmersiveRow(
-    title: String,
-    subtitle: String? = null,
-    trailing: @Composable () -> Unit,
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .liquidGlass(
-                shape = RoundedCornerShape(18.dp),
-                blurRadius = 18.dp,
-                elevation = 3.dp
-            )
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            BasicText(title, style = TextStyle(color = TextPrimary, fontSize = 14.sp))
-            if (subtitle != null) {
-                BasicText(subtitle, style = TextStyle(color = TextMuted, fontSize = 11.sp))
-            }
-        }
-        trailing()
-    }
-}
-
-@Composable
-private fun ImmersiveDivider() {
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp)
-            .height(1.dp)
-            .background(GlassBorder)
-    )
-}
-
-/**
- * 滑块式开关（自绘）：轨道在关闭态是中性玻璃色、打开态渐变到品牌粉，
- * 拇指位置用弹簧动画过渡，明暗主题下都清晰可见。
- */
-@Composable
-private fun ImmersiveSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
-    val t by animateFloatAsState(
-        targetValue = if (checked) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.72f, stiffness = 520f),
-        label = "switchThumb"
-    )
-    Box(
-        Modifier
-            .size(width = 52.dp, height = 32.dp)
-            .liquidPress({ onChange(!checked) }, pressedScale = 0.97f)
-            .liquidGlass(
-                shape = GlassCapsule,
-                blurRadius = 16.dp,
-                tint = if (checked) Accent.copy(alpha = 0.76f) else Color.Unspecified,
-                elevation = 4.dp
-            )
-            .padding(3.dp),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        Box(
-            Modifier
-                .size(26.dp)
-                .graphicsLayer {
-                    translationX = t * 20.dp.toPx()
-                    shadowElevation = 4.dp.toPx()
-                    shape = CircleShape
-                    clip = true
-                }
-                .background(Color.White)
-        )
-    }
-}
-
-/** 兼容旧调用点：原来是一枚「开启/关闭」胶囊，现在换成滑块。 */
-@Composable
-private fun TogglePill(on: Boolean, onChange: (Boolean) -> Unit) {
-    ImmersiveSwitch(checked = on, onChange = onChange)
 }
 
 @Composable
@@ -3184,6 +3920,7 @@ fun ImmersiveSettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         GeneralSection()
+                        Spacer(Modifier.height(LocalImmersiveBottomSpace.current))
                     }
                     Column(
                         Modifier
@@ -3194,6 +3931,7 @@ fun ImmersiveSettingsScreen(
                     ) {
                         DesktopSection()
                         BackupSection()
+                        Spacer(Modifier.height(LocalImmersiveBottomSpace.current))
                     }
                 }
             }
@@ -3210,7 +3948,7 @@ fun ImmersiveSettingsScreen(
                 GeneralSection()
                 DesktopSection()
                 BackupSection()
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(LocalImmersiveBottomSpace.current + 24.dp))
             }
         }
     }

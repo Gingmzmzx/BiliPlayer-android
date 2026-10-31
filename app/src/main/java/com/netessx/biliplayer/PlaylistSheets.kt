@@ -380,7 +380,7 @@ internal fun AddToPlaylistSheet(
                     enabled = newName.isNotBlank(),
                     onClick = {
                         PlaylistStore.createManual(context, newName, listOf(track))
-                        Toast.makeText(context, "已新建并添加", Toast.LENGTH_SHORT).show()
+                        AppSnackbar.show("已新建并添加")
                         close()
                     }
                 )

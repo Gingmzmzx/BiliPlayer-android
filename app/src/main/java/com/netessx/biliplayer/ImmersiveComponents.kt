@@ -1,7 +1,14 @@
 package com.netessx.biliplayer
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +28,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -206,6 +217,37 @@ internal fun ImmersiveSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
 @Composable
 internal fun TogglePill(on: Boolean, onChange: (Boolean) -> Unit) {
     ImmersiveSwitch(checked = on, onChange = onChange)
+}
+
+/** 不确定进度条：抓取 DOM 时顶部扫过的一段粉色。 */
+@Composable
+internal fun ImmersiveLoadingBar(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "loadingBar")
+    val progress by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1100, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "loadingBarProgress"
+    )
+    Canvas(
+        modifier
+            .fillMaxWidth()
+            .height(3.dp)
+            .clip(GlassCapsule)
+            .background(GlassBorder)
+    ) {
+        val segment = size.width * 0.32f
+        val start = (size.width + segment) * progress - segment
+        drawRoundRect(
+            color = Accent,
+            topLeft = Offset(start, 0f),
+            size = Size(segment, size.height),
+            cornerRadius = CornerRadius(size.height / 2f)
+        )
+    }
 }
 
 internal fun formatClock(seconds: Double): String {

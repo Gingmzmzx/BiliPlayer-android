@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
+import java.io.File
 
 /**
  * 推荐合集。
@@ -44,6 +45,13 @@ data class RecommendDetail(
     val loading: Boolean = false,
     val error: String? = null,
     val progress: String? = null,
+    val updateNotice: String? = null,
+)
+
+private data class CachedCollection(
+    val title: String,
+    val videos: List<RecommendVideo>,
+    val updatedAt: Long,
 )
 
 data class RecommendState(
@@ -79,9 +87,15 @@ object RecommendStore {
     private var detailItem: RecommendItem? = null
     private val detailSeen = LinkedHashMap<String, RecommendVideo>()
 
+    private val detailCache = mutableMapOf<String, CachedCollection>()
+    private var cacheLoaded = false
+    private var detailBaseline: Set<String> = emptySet()
+    private var detailHadCache = false
+
     fun init(context: Context) {
         appContext = context.applicationContext
         listsUrl = Preferences.recommendSource(context)
+        loadCache(context)
     }
 
     /** 修改来源后立即重新抓取。 */
@@ -129,6 +143,9 @@ object RecommendStore {
         detailSeen.clear()
         detailPage = 1
         detailAwaitingLists = true
+        val cached = detailCache[item.id]
+        detailBaseline = cached?.videos?.map { it.bvid }?.toSet().orEmpty()
+        detailHadCache = !cached?.videos.isNullOrEmpty()
         _state.update {
             it.copy(
                 loading = false,
@@ -136,8 +153,9 @@ object RecommendStore {
                 detail = RecommendDetail(
                     itemId = item.id,
                     title = item.title,
+                    videos = cached?.videos.orEmpty(),
                     loading = true,
-                    progress = "正在打开合集…"
+                    progress = if (detailHadCache) "正在检查更新…" else "正在打开合集…"
                 )
             )
         }
@@ -383,7 +401,9 @@ object RecommendStore {
             _state.update {
                 it.copy(
                     detail = it.detail?.copy(
-                        videos = detailSeen.values.toList(),
+                        // 有缓存时先保持缓存展示，抓完再整体替换
+                        videos = if (detailHadCache) it.detail.videos
+                        else detailSeen.values.toList(),
                         progress = "第 $detailPage 页 · ${detailSeen.size} 个视频"
                     )
                 )
@@ -432,16 +452,44 @@ object RecommendStore {
 
     private fun finishDetail(id: Int) {
         if (id != detailRunId) return
-        val videos = detailSeen.values.toList()
+        val fetched = detailSeen.values.toList()
+        val cached = _state.value.detail?.videos.orEmpty()
+        val videos = if (fetched.isNotEmpty()) fetched else cached
+        val added = fetched.count { it.bvid !in detailBaseline }
+        val notice = if (detailHadCache && fetched.isNotEmpty() && added > 0) {
+            "合集有 $added 个新视频，已更新"
+        } else {
+            null
+        }
+
+        if (fetched.isNotEmpty()) {
+            val item = detailItem
+            if (item != null) {
+                detailCache[item.id] = CachedCollection(
+                    title = item.title,
+                    videos = fetched,
+                    updatedAt = System.currentTimeMillis()
+                )
+                persistCache()
+            }
+        }
+
         _state.update {
             it.copy(
                 detail = it.detail?.copy(
                     videos = videos,
                     loading = false,
                     error = if (videos.isEmpty()) "没有抓到视频，合集页可能改版" else null,
-                    progress = null
+                    progress = null,
+                    updateNotice = notice
                 )
             )
+        }
+    }
+
+    fun clearDetailNotice() {
+        _state.update {
+            it.copy(detail = it.detail?.copy(updateNotice = null))
         }
     }
 
@@ -450,12 +498,73 @@ object RecommendStore {
         _state.update {
             it.copy(
                 detail = it.detail?.copy(
-                    videos = detailSeen.values.toList(),
+                    videos = detailSeen.values.toList()
+                        .ifEmpty { it.detail.videos },
                     loading = false,
                     error = message,
                     progress = null
                 )
             )
+        }
+    }
+
+    // ---------------- 合集缓存 ----------------
+
+    private fun loadCache(context: Context) {
+        if (cacheLoaded) return
+        cacheLoaded = true
+        runCatching {
+            val file = File(context.filesDir, "recommend_cache.json")
+            if (!file.exists()) return
+            val root = JSONObject(file.readText())
+            val collections = root.optJSONObject("collections") ?: return
+            collections.keys().forEach { key ->
+                val o = collections.optJSONObject(key) ?: return@forEach
+                val videos = parseVideoArray(o.optJSONArray("videos"))
+                if (videos.isNotEmpty()) {
+                    detailCache[key] = CachedCollection(
+                        title = o.optString("title"),
+                        videos = videos,
+                        updatedAt = o.optLong("updatedAt", 0L)
+                    )
+                }
+            }
+        }
+    }
+
+    private fun persistCache() {
+        val context = appContext ?: return
+        val kept = detailCache.entries
+            .sortedByDescending { it.value.updatedAt }
+            .take(30)
+        val keptIds = kept.map { it.key }.toSet()
+        detailCache.keys.retainAll(keptIds)
+
+        val collections = JSONObject()
+        kept.forEach { (id, cached) ->
+            val videos = JSONArray()
+            cached.videos.forEach { v ->
+                videos.put(
+                    JSONObject()
+                        .put("bvid", v.bvid)
+                        .put("title", v.title)
+                        .put("cover", v.cover)
+                        .put("url", v.url)
+                )
+            }
+            collections.put(
+                id,
+                JSONObject()
+                    .put("title", cached.title)
+                    .put("updatedAt", cached.updatedAt)
+                    .put("videos", videos)
+            )
+        }
+        val root = JSONObject().put("collections", collections)
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                File(context.filesDir, "recommend_cache.json").writeText(root.toString())
+            }
         }
     }
 

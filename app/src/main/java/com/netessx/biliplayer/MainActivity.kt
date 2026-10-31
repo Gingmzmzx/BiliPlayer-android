@@ -200,7 +200,6 @@ fun BiliPlayerApp() {
     // 0 = 推荐；关闭播放页后回到这个 tab，而不是固定歌单页
     var immersiveTab by rememberSaveable { mutableStateOf(0) }
     // 冷启动 splash：推荐内容加载完成后再进入主界面
-    var showSplash by rememberSaveable { mutableStateOf(true) }
     // 统一的沉浸式界面开关：播放器 / 统计 / 设置一起切换
     var immersiveMode by remember {
         mutableStateOf(
@@ -275,7 +274,7 @@ fun BiliPlayerApp() {
     // 一次性提示（视频失效剔除等）
     LaunchedEffect(Unit) {
         PlayerController.toast.collect { msg ->
-            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            AppSnackbar.show(msg)
         }
     }
 
@@ -343,12 +342,6 @@ fun BiliPlayerApp() {
             delay(500)
             PlayerController.enterFullscreen()
         }
-    }
-
-    // 冷启动先显示 splash，同时预加载推荐合集；完成后再进入主界面
-    if (immersiveMode && showSplash) {
-        ImmersiveSplashScreen(onReady = { showSplash = false })
-        return
     }
 
     Scaffold(
@@ -661,6 +654,12 @@ fun BiliPlayerApp() {
                     }
                 }
             }
+
+            GlassSnackbarHost(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 100.dp)
+            )
         }
     }
 

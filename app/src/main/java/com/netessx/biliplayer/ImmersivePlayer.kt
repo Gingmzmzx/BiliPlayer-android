@@ -2955,6 +2955,10 @@ private fun RecommendListPage(
             })
         }
 
+        if (state.loading) {
+            Spacer(Modifier.height(10.dp))
+            ImmersiveLoadingBar()
+        }
         state.progress?.let {
             Spacer(Modifier.height(8.dp))
             BasicText(it, style = TextStyle(color = Accent, fontSize = 11.sp))
@@ -3300,6 +3304,10 @@ private fun RecommendDetailPage(
             }
         }
 
+        if (detail.loading) {
+            Spacer(Modifier.height(10.dp))
+            ImmersiveLoadingBar()
+        }
         detail.progress?.let {
             Spacer(Modifier.height(8.dp))
             BasicText(it, style = TextStyle(color = Accent, fontSize = 11.sp))
@@ -3307,6 +3315,34 @@ private fun RecommendDetailPage(
         detail.error?.let {
             Spacer(Modifier.height(8.dp))
             BasicText(it, style = TextStyle(color = Color(0xFFFF8A8A), fontSize = 12.sp))
+        }
+
+        detail.updateNotice?.let { notice ->
+            LaunchedEffect(notice) {
+                delay(4200)
+                RecommendStore.clearDetailNotice()
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(GlassCapsule)
+                    .liquidGlass(
+                        shape = GlassCapsule,
+                        blurRadius = 20.dp,
+                        elevation = 6.dp
+                    )
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BasicText(
+                    notice,
+                    style = TextStyle(color = TextPrimary, fontSize = 12.sp),
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(8.dp))
+                Pill("知道了") { RecommendStore.clearDetailNotice() }
+            }
         }
 
         if (detail.videos.isEmpty()) {
@@ -4409,11 +4445,7 @@ fun ImmersiveSettingsScreen(
                     val source = Preferences.normalizeRecommendSource(recommendUid)
                     Preferences.saveRecommendSource(context, source)
                     RecommendStore.updateSource(context, source)
-                    android.widget.Toast.makeText(
-                        context,
-                        "推荐来源已更新",
-                        android.widget.Toast.LENGTH_SHORT
-                    ).show()
+                    AppSnackbar.show("推荐来源已更新")
                 }
                 Pill("恢复默认") {
                     recommendUid = Preferences.DEFAULT_RECOMMEND_UID

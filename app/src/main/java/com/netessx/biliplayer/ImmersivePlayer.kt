@@ -84,6 +84,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -2744,6 +2745,21 @@ private fun SearchScreen(
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val columns = if (landscape) 3 else 2
     val host = (context as? android.app.Activity)?.window?.decorView as? ViewGroup
+    val listState = rememberLazyListState()
+    val nearBottom by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            info.totalItemsCount > 0 && last >= info.totalItemsCount - 3
+        }
+    }
+    // 只在下拉到底时追加一页，不在后台一次抓完
+    LaunchedEffect(nearBottom) {
+        if (nearBottom) SearchStore.loadMore()
+    }
+    LaunchedEffect(state.query) {
+        if (state.query.isNotBlank()) listState.scrollToItem(0)
+    }
 
     LaunchedEffect(Unit) { SearchStore.init(context) }
 
@@ -2795,7 +2811,7 @@ private fun SearchScreen(
             Pill(
                 "搜索",
                 highlighted = query.isNotBlank(),
-                enabled = !state.loading && query.isNotBlank(),
+                enabled = query.isNotBlank(),
                 onClick = { SearchStore.search(context, query, host) }
             )
         }
@@ -2820,7 +2836,8 @@ private fun SearchScreen(
             }
         } else {
             LazyColumn(
-                Modifier.fillMaxSize(),
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 itemsIndexed(state.results.chunked(columns)) { _, row ->
@@ -2842,6 +2859,25 @@ private fun SearchScreen(
                     }
                 }
                 item {
+                    Box(
+                        Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        when {
+                            state.loadingMore -> BasicText(
+                                "正在加载更多…",
+                                style = TextStyle(color = TextMuted, fontSize = 12.sp)
+                            )
+                            !state.hasMore -> BasicText(
+                                "没有更多结果",
+                                style = TextStyle(color = TextDim, fontSize = 11.sp)
+                            )
+                            else -> BasicText(
+                                "继续上滑加载更多",
+                                style = TextStyle(color = TextDim, fontSize = 11.sp)
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(LocalImmersiveBottomSpace.current + 16.dp))
                 }
             }

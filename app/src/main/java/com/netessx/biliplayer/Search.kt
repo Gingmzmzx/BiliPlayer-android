@@ -19,6 +19,8 @@ data class SearchState(
     val query: String = "",
     val results: List<RecommendVideo> = emptyList(),
     val loading: Boolean = false,
+    val loadingMore: Boolean = false,
+    val hasMore: Boolean = false,
     val error: String? = null,
     val progress: String? = null,
 )
@@ -29,6 +31,7 @@ data class SearchState(
 object SearchStore {
 
     private const val MAX_PAGES = 5
+    private const val INITIAL_PAGES = 2
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val _state = MutableStateFlow(SearchState())
     val state: StateFlow<SearchState> = _state
@@ -39,6 +42,8 @@ object SearchStore {
     private var runId = 0
     private var page = 1
     private var awaitingPage = false
+    private var currentUrl: String? = null
+    private var currentKeyword: String = ""
     private val seen = LinkedHashMap<String, RecommendVideo>()
 
     fun init(context: Context) {
@@ -50,7 +55,9 @@ object SearchStore {
         if (query.isBlank()) return
         init(context)
         host = hostView ?: host
+        // 中断旧搜索：自增 runId 让所有回调失效，并停止当前页面加载
         val id = ++runId
+        browser?.stopLoading()
         seen.clear()
         page = 1
         awaitingPage = true
@@ -58,7 +65,10 @@ object SearchStore {
 
         val b = ensureBrowser() ?: return
         val keyword = URLEncoder.encode(query, "UTF-8")
-        b.load("https://search.bilibili.com/all?keyword=$keyword&from_source=web_search")
+        val url = "https://search.bilibili.com/all?keyword=$keyword&from_source=web_search"
+        currentUrl = url
+        currentKeyword = keyword
+        b.load(url)
 
         scope.launch {
             delay(45000)
@@ -66,6 +76,19 @@ object SearchStore {
                 fail(id, "搜索超时，请重试")
             }
         }
+    }
+
+    /** 用户滚动到底部时加载下一页。 */
+    fun loadMore() {
+        val s = _state.value
+        if (s.loading || s.loadingMore || !s.hasMore) return
+        if (browser == null || runId == 0) return
+        if (page >= MAX_PAGES) {
+            _state.update { it.copy(hasMore = false) }
+            return
+        }
+        _state.update { it.copy(loadingMore = true) }
+        nextPage(runId)
     }
 
     private fun ensureBrowser(): HeadlessBrowser? {
@@ -78,13 +101,16 @@ object SearchStore {
         b.onMainFrameError = { msg ->
             if (_state.value.loading) fail(runId, "页面加载失败：$msg")
         }
-        b.onPageFinished = {
-            if (awaitingPage && _state.value.loading) {
-                awaitingPage = false
-                val id = runId
-                scope.launch {
-                    delay(2200)
-                    scrape(id, attempt = 0)
+        b.onPageFinished = { url ->
+            // 旧搜索的页面完成回调直接忽略（URL 可能被 B 站补参数，用关键词兜底）
+            if (url == null || url == currentUrl || url.contains(currentKeyword)) {
+                if (awaitingPage && _state.value.loading) {
+                    awaitingPage = false
+                    val id = runId
+                    scope.launch {
+                        delay(2200)
+                        scrape(id, attempt = 0)
+                    }
                 }
             }
         }
@@ -94,7 +120,8 @@ object SearchStore {
 
     private fun scrape(id: Int, attempt: Int) {
         val b = browser ?: return
-        if (id != runId || !_state.value.loading) return
+        if (id != runId) return
+        if (!_state.value.loading && !_state.value.loadingMore) return
         b.evaluate(EXTRACT_JS) { raw ->
             if (id != runId) return@evaluate
             val videos = parse(raw)
@@ -115,22 +142,36 @@ object SearchStore {
                 return@evaluate
             }
 
+            val initial = _state.value.loading
             _state.update {
                 it.copy(
                     results = seen.values.toList(),
                     progress = "第 $page 页 · ${seen.size} 个结果"
                 )
             }
-            scope.launch {
-                delay(400)
-                nextPage(id)
+            if (initial && page < INITIAL_PAGES) {
+                scope.launch {
+                    delay(400)
+                    nextPage(id)
+                }
+            } else {
+                // 首屏两页或用户触发的下一页都先停下，等用户再滚到底部
+                _state.update {
+                    it.copy(
+                        loading = false,
+                        loadingMore = false,
+                        hasMore = page < MAX_PAGES,
+                        progress = null
+                    )
+                }
             }
         }
     }
 
     private fun nextPage(id: Int) {
         val b = browser ?: return
-        if (id != runId || !_state.value.loading) return
+        if (id != runId) return
+        if (!_state.value.loading && !_state.value.loadingMore) return
         if (page >= MAX_PAGES) {
             finish(id)
             return
@@ -166,6 +207,8 @@ object SearchStore {
             it.copy(
                 results = results,
                 loading = false,
+                loadingMore = false,
+                hasMore = false,
                 error = if (results.isEmpty()) "没有抓到搜索结果" else null,
                 progress = null
             )
@@ -178,6 +221,8 @@ object SearchStore {
             it.copy(
                 results = seen.values.toList(),
                 loading = false,
+                loadingMore = false,
+                hasMore = false,
                 error = message,
                 progress = null
             )

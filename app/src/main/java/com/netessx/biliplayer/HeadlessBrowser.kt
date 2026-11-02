@@ -249,6 +249,11 @@ class HeadlessBrowser(private val context: Context) {
         webView?.loadUrl(url)
     }
 
+    /** 中断当前页面加载（开始新搜索时调用）。 */
+    fun stopLoading() {
+        mainHandler.post { webView?.stopLoading() }
+    }
+
     /** 在页面中执行 JS，[callback] 收到 JSON 编码的返回值（与 evaluateJavascript 一致）。 */
     fun evaluate(script: String, callback: ((String) -> Unit)? = null) {
         val web = webView ?: return

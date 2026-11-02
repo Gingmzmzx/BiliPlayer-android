@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,13 +53,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
-/** 歌单曲目管理页：调整顺序、删除歌曲。 */
+/** 歌单曲目管理页：调整顺序、编辑偏好、删除歌曲。 */
 @Composable
 internal fun PlaylistTracksScreen(playlistId: String, onBack: () -> Unit) {
     val context = LocalContext.current
     val playlists by PlaylistStore.playlists.collectAsState()
     val pl = playlists.firstOrNull { it.id == playlistId }
     val hideBottomNav = LocalHideBottomNav.current
+    var prefTrack by remember { mutableStateOf<BiliTrack?>(null) }
     DisposableEffect(Unit) {
         hideBottomNav.value = true
         onDispose { hideBottomNav.value = false }
@@ -158,6 +160,36 @@ internal fun PlaylistTracksScreen(playlistId: String, onBack: () -> Unit) {
                                 style = TextStyle(color = TextDim, fontSize = 9.sp)
                             )
                         }
+                        LiquidCircleButton(
+                            size = 32.dp,
+                            onClick = { prefTrack = track }
+                        ) {
+                            val color = TextMuted
+                            Canvas(Modifier.size(13.dp)) {
+                                val w = size.width
+                                val h = size.height
+                                val stroke = 1.7.dp.toPx()
+                                drawLine(
+                                    color,
+                                    Offset(w * 0.18f, h * 0.82f),
+                                    Offset(w * 0.82f, h * 0.18f),
+                                    stroke * 1.4f
+                                )
+                                drawLine(
+                                    color,
+                                    Offset(w * 0.10f, h * 0.90f),
+                                    Offset(w * 0.26f, h * 0.84f),
+                                    stroke
+                                )
+                                drawLine(
+                                    color,
+                                    Offset(w * 0.10f, h * 0.90f),
+                                    Offset(w * 0.16f, h * 0.74f),
+                                    stroke
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(6.dp))
                         Box(
                             Modifier
                                 .size(34.dp)
@@ -226,6 +258,84 @@ internal fun PlaylistTracksScreen(playlistId: String, onBack: () -> Unit) {
                 item { Spacer(Modifier.height(16.dp)) }
             }
         }
+
+        prefTrack?.let { track ->
+            TrackPreferenceDialog(track = track, onDismiss = { prefTrack = null })
+        }
+    }
+}
+
+/** 单曲偏好编辑内容（分P / 开始秒 / 结束秒），不依赖 Material 输入框。 */
+@Composable
+internal fun TrackPreferenceEditor(
+    track: BiliTrack,
+    initial: TrackPreference,
+    onSave: (TrackPreference) -> Unit,
+    onClear: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var pText by remember(track.bvid) { mutableStateOf(initial.p?.toString() ?: "") }
+    var beginText by remember(track.bvid) { mutableStateOf(initial.beginTime?.toString() ?: "") }
+    var endText by remember(track.bvid) { mutableStateOf(initial.endTime?.toString() ?: "") }
+
+    Column(
+        Modifier
+            .padding(horizontal = 32.dp)
+            .liquidGlass(
+                shape = RoundedCornerShape(26.dp),
+                blurRadius = 30.dp,
+                elevation = 22.dp
+            )
+            .clickable(enabled = false) {}
+            .padding(22.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        BasicText(
+            "单曲偏好",
+            style = TextStyle(color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        )
+        BasicText(
+            track.title.ifBlank { track.bvid },
+            style = TextStyle(color = TextMuted, fontSize = 12.sp),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        BareField("分 P（留空为第 1P）", pText) { pText = it.filter(Char::isDigit) }
+        BareField("开始秒（跳过片头）", beginText) { beginText = it.filter(Char::isDigit) }
+        BareField("结束秒（自动切歌）", endText) { endText = it.filter(Char::isDigit) }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Pill("保存", highlighted = true) {
+                onSave(
+                    TrackPreference(
+                        p = pText.toIntOrNull(),
+                        beginTime = beginText.toIntOrNull(),
+                        endTime = endText.toIntOrNull()
+                    )
+                )
+                onDismiss()
+            }
+            Pill("清除") {
+                onClear()
+                onDismiss()
+            }
+            Pill("取消") { onDismiss() }
+        }
+    }
+}
+
+/** 按 bvid 编辑任意歌单歌曲的偏好弹窗。 */
+@Composable
+internal fun TrackPreferenceDialog(track: BiliTrack, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val initial = remember(track.bvid) { Preferences.preference(context, track.bvid) }
+    GlassDialog(onDismiss = onDismiss) { close ->
+        TrackPreferenceEditor(
+            track = track,
+            initial = initial,
+            onSave = { PlayerController.setPreferenceForBvid(track.bvid, it) },
+            onClear = { PlayerController.setPreferenceForBvid(track.bvid, TrackPreference()) },
+            onDismiss = close
+        )
     }
 }
 

@@ -12,7 +12,7 @@ object Preferences {
     private const val KEY_VOLUME = "default_volume"
     private const val KEY_PLAY_MODE = "play_mode"
     private const val KEY_P_PREF = "p_pref"
-    private const val KEY_AUTO_FULLSCREEN = "auto_fullscreen"
+    private const val KEY_DEBUG_WEBVIEW = "debug_webview"
     private const val KEY_LAST_NOTICE_ID = "last_notice_id"
     private const val KEY_IGNORED_UPDATE_CODE = "ignored_update_code"
     private const val KEY_DESKTOP_LYRICS = "desktop_lyrics"
@@ -60,10 +60,10 @@ object Preferences {
         sp(context).edit().putString(KEY_PLAY_MODE, mode.name).apply()
     }
 
-    // ----- 自动全屏 -----
-    fun autoFullscreen(context: Context): Boolean = sp(context).getBoolean(KEY_AUTO_FULLSCREEN, true)
-    fun saveAutoFullscreen(context: Context, v: Boolean) {
-        sp(context).edit().putBoolean(KEY_AUTO_FULLSCREEN, v).apply()
+    // ----- 调试：置顶显示 WebView -----
+    fun debugWebView(context: Context): Boolean = sp(context).getBoolean(KEY_DEBUG_WEBVIEW, false)
+    fun saveDebugWebView(context: Context, enabled: Boolean) {
+        sp(context).edit().putBoolean(KEY_DEBUG_WEBVIEW, enabled).apply()
     }
 
     // ----- 已读公告 id（公告 id 单调递增，用它做去重） -----

@@ -85,6 +85,8 @@ dependencies {
     implementation libs.androidx.compose.ui.tooling.preview
     implementation libs.androidx.core.ktx
     implementation libs.androidx.lifecycle.runtime.ktx
+    // document-start 脚本注入（防登录弹窗 / 评论区限流修复）
+    implementation libs.androidx.webkit
     testImplementation libs.junit
     androidTestImplementation platform(libs.androidx.compose.bom)
     androidTestImplementation libs.androidx.compose.ui.test.junit4

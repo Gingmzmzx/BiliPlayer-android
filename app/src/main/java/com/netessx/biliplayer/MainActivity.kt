@@ -110,6 +110,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -129,6 +130,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import androidx.core.text.HtmlCompat
 import com.netessx.biliplayer.ui.theme.BiliPlayerTheme
 import kotlinx.coroutines.Dispatchers
@@ -183,12 +185,14 @@ fun BiliPlayerApp() {
     val playerHaze = rememberLiquidGlassState()
     val uiState by PlayerController.state.collectAsState()
     val webView by PlayerController.webView.collectAsState()
+    val commentViewportActive by PlayerController.commentViewportActive.collectAsState()
     val library by PlaylistStore.playlists.collectAsState()
     val stats by PlaybackStats.stats.collectAsState()
     val lyrics by LyricsStore.entries.collectAsState()
     var screen by remember { mutableStateOf(AppScreen.LIBRARY) }
     var importing by remember { mutableStateOf(false) }
-    var showWebView by remember { mutableStateOf(Preferences.autoFullscreen(context)) }
+    var showWebView by remember { mutableStateOf(false) }
+    var debugWebView by remember { mutableStateOf(Preferences.debugWebView(context)) }
     var currentTab by remember { mutableStateOf(AppTab.PLAYER) }
     var showLogin by remember { mutableStateOf(false) }
     var showLogs by remember { mutableStateOf(false) }
@@ -200,17 +204,10 @@ fun BiliPlayerApp() {
     // 0 = 推荐；关闭播放页后回到这个 tab，而不是固定歌单页
     var immersiveTab by rememberSaveable { mutableStateOf(0) }
     // 冷启动 splash：推荐内容加载完成后再进入主界面
-    // 统一的沉浸式界面开关：播放器 / 统计 / 设置一起切换
+    // 强制启用沉浸式界面；保留旧开关的存储值，避免回滚版本后状态异常
     var immersiveMode by remember {
-        mutableStateOf(
-            if (upgradedFromOldVersion) {
-                // 升级后首次启动强制体验新版沉浸界面
-                Preferences.saveImmersiveMode(context, true)
-                true
-            } else {
-                Preferences.immersiveMode(context)
-            }
-        )
+        Preferences.saveImmersiveMode(context, true)
+        mutableStateOf(true)
     }
     // 沉浸模式下的二级页面（统计 / 设置 / 关于），null = 播放页
     var immersiveSub by remember { mutableStateOf<ImmersiveSub?>(null) }
@@ -318,14 +315,15 @@ fun BiliPlayerApp() {
     // 进入播放器时按偏好决定默认显示 WebView 还是封面；可设为直接进沉浸页
     LaunchedEffect(inMain) {
         if (inMain) {
-            showWebView = Preferences.autoFullscreen(context)
+            showWebView = false
             if (immersiveMode) immersive = true
         }
     }
 
     // 抓取/同步期间必须露出 WebView（B 站要渲染才能出侧栏和卡片）；
-    // 播放器页则由"显示画面"开关决定
+    // 调试模式强制置顶显示；播放器页则由"显示画面"开关决定
     val showWebPanel = when {
+        debugWebView -> true
         uiState.isFetching -> true
         // 沉浸页不显示视频画面，只留封面背景
         immersive -> false
@@ -333,15 +331,12 @@ fun BiliPlayerApp() {
         else -> false
     }
 
-    // 面板每次重新露出（点了「显示页面」或切回播放器 tab）时补一次全屏：
-    // 等 WebView 完成布局（高度>0）再点，避免坐标落在折叠页面上。
-    // 用 showWebPanel 而不是 showWebView —— 切 tab 时面板也会收起再展开，值却不变。
-    LaunchedEffect(showWebPanel) {
-        PlayerController.setWebPanelVisible(showWebPanel)
-        if (showWebPanel && inMain) {
-            delay(500)
-            PlayerController.enterFullscreen()
-        }
+    val onDebugWebViewChange: (Boolean) -> Unit = { enabled ->
+        debugWebView = enabled
+        Preferences.saveDebugWebView(context, enabled)
+        // 还没有开始播放时也要先把 WebView 建出来，否则开关看起来没有反应
+        if (enabled) PlayerController.ensureBrowser()
+        AppSnackbar.show(if (enabled) "调试 WebView 已开启" else "调试 WebView 已关闭")
     }
 
     Scaffold(
@@ -371,6 +366,8 @@ fun BiliPlayerApp() {
         }
     ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
+            // 调试模式：给置顶 WebView 让出高度，避免盖住设置页开关
+            Box(Modifier.fillMaxSize().padding(top = if (debugWebView) 240.dp else 0.dp)) {
             when {
                 showLogin -> if (immersiveMode) {
                     ImmersiveLoginScreen(onBack = { showLogin = false })
@@ -384,16 +381,15 @@ fun BiliPlayerApp() {
             }
                 !inMain -> {
                     Column(Modifier.fillMaxSize()) {
-                        Spacer(Modifier.height(if (showWebPanel) 240.dp else 0.dp))
+                        Spacer(Modifier.height(if (showWebPanel && !debugWebView) 240.dp else 0.dp))
                         Box(Modifier.weight(1f)) {
                             when (screen) {
                                 AppScreen.IMPORT -> if (immersiveMode) ImmersiveImportScreen(
                                     uiState = uiState,
                                     onLoginClick = { showLogin = true },
-                                    onStart = { uid, favName, autoFullscreen ->
+                                    onStart = { uid, favName ->
                                         PlayerController.init(context)
                                         Preferences.saveIdentity(context, uid, favName)
-                                        Preferences.saveAutoFullscreen(context, autoFullscreen)
                                         importing = true
                                         miniPlayer = false
                                         PlayerService.start(context)
@@ -420,6 +416,8 @@ fun BiliPlayerApp() {
                                         immersiveMode = it
                                         Preferences.saveImmersiveMode(context, it)
                                     },
+                                    debugWebView = debugWebView,
+                                    onDebugWebViewChange = onDebugWebViewChange,
                                     checking = checkingUpdate,
                                     checkResult = checkResult,
                                     onCheckUpdate = checkForUpdates,
@@ -490,7 +488,7 @@ fun BiliPlayerApp() {
                 else -> {
                 when (currentTab) {
                     AppTab.PLAYER -> Column(Modifier.fillMaxSize()) {
-                        Spacer(Modifier.height(if (showWebPanel) 240.dp else 0.dp))
+                        Spacer(Modifier.height(if (showWebPanel && !debugWebView) 240.dp else 0.dp))
                         Box(Modifier.weight(1f)) {
                             // 返回列表库：停止播放、清空状态、停掉前台服务
                             val goBack: () -> Unit = {
@@ -542,6 +540,8 @@ fun BiliPlayerApp() {
                                                     immersiveMode = it
                                                     Preferences.saveImmersiveMode(context, it)
                                                 },
+                                                debugWebView = debugWebView,
+                                                onDebugWebViewChange = onDebugWebViewChange,
                                                 onBack = { immersiveSub = null }
                                             )
                                             ImmersiveSub.ABOUT -> ImmersiveAboutScreen(
@@ -597,7 +597,9 @@ fun BiliPlayerApp() {
                             onImmersiveModeChange = {
                                 immersiveMode = it
                                 Preferences.saveImmersiveMode(context, it)
-                            }
+                            },
+                            debugWebView = debugWebView,
+                            onDebugWebViewChange = onDebugWebViewChange
                         )
                     } else {
                         SettingsScreen(
@@ -606,7 +608,9 @@ fun BiliPlayerApp() {
                             onImmersiveModeChange = {
                                 immersiveMode = it
                                 Preferences.saveImmersiveMode(context, it)
-                            }
+                            },
+                            debugWebView = debugWebView,
+                            onDebugWebViewChange = onDebugWebViewChange
                         )
                     }
                     AppTab.ABOUT -> AboutScreen(
@@ -618,6 +622,7 @@ fun BiliPlayerApp() {
                 }
                 }
             }
+            }
 
             // WebView 始终挂载（设置页/播放页占用顶部空间，其余页高度为 0）
             val wv = webView
@@ -626,20 +631,26 @@ fun BiliPlayerApp() {
                     Modifier
                         .fillMaxWidth()
                         .align(Alignment.TopCenter)
-                        .height(if (showWebPanel) 240.dp else 0.dp)
+                        .zIndex(if (debugWebView) 20f else 0f)
+                        .height(if (showWebPanel || commentViewportActive) 240.dp else 0.dp)
                 ) {
                     AndroidView(
                         factory = { wv },
                         update = {
                             it.translationX = 0f
                             it.translationY = 0f
-                            it.alpha = if (showWebPanel) 1f else 0f
+                            it.alpha = if (showWebPanel || commentViewportActive) 1f else 0f
                         },
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            // 静默读取评论时保留真实布局视口，但把 WebView 移出屏幕
+                            .graphicsLayer {
+                                translationX = if (commentViewportActive && !showWebPanel) -4000f else 0f
+                            }
                     )
-                    if (inMain && showWebPanel) {
+                    if (inMain && showWebPanel && !debugWebView) {
                         // 透明触摸拦截层：仅在主界面屏蔽用户点击/滑动（抓取收藏夹阶段不屏蔽，便于手动介入）
-                        // 自动化 dispatchTouchEvent 直连 WebView，不受影响
+                        // 自动化 dispatchTouchEvent 直连 WebView，不受影响；调试模式允许直接操作页面
                         Box(
                             Modifier
                                 .fillMaxSize()
@@ -651,6 +662,19 @@ fun BiliPlayerApp() {
                                     }
                                 }
                         )
+                    }
+                    if (debugWebView && showWebPanel) {
+                        Box(
+                            Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(6.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.Black.copy(alpha = 0.62f))
+                                .clickable { onDebugWebViewChange(false) }
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                        ) {
+                            Text("DEBUG WebView · 点击关闭", color = Color.White, fontSize = 10.sp)
+                        }
                     }
                 }
             }
@@ -1244,7 +1268,6 @@ private fun SetupScreen(
     val context = LocalContext.current
     var uid by remember { mutableStateOf(Preferences.uid(context)) }
     var favName by remember { mutableStateOf(Preferences.favName(context)) }
-    var autoFullscreen by remember { mutableStateOf(Preferences.autoFullscreen(context)) }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -1276,13 +1299,6 @@ private fun SetupScreen(
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(
-                checked = autoFullscreen,
-                onCheckedChange = { autoFullscreen = it }
-            )
-            Text("自动全屏并隐藏控制条（不勾选则显示封面）", style = MaterialTheme.typography.bodyMedium)
-        }
         OutlinedButton(
             onClick = onLoginClick,
             modifier = Modifier.fillMaxWidth()
@@ -1298,7 +1314,6 @@ private fun SetupScreen(
             onClick = {
                 PlayerController.init(context)
                 Preferences.saveIdentity(context, uid.trim(), favName.trim())
-                Preferences.saveAutoFullscreen(context, autoFullscreen)
                 PlayerService.start(context)
                 PlayerController.importAndStart(uid.trim(), favName.trim())
             },
@@ -2185,6 +2200,8 @@ private fun SettingsScreen(
     uiState: PlayerUiState,
     immersiveMode: Boolean,
     onImmersiveModeChange: (Boolean) -> Unit,
+    debugWebView: Boolean,
+    onDebugWebViewChange: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -2239,16 +2256,16 @@ private fun SettingsScreen(
         Text("界面", style = MaterialTheme.typography.titleMedium)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("沉浸式界面", style = MaterialTheme.typography.titleSmall)
+                Text("调试：置顶显示 WebView", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    "播放器、统计、设置全部切换为无 Material 的沉浸版界面；关闭则用经典界面",
+                    "在所有页面顶部固定显示网页画面，可直接操作页面",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Switch(
-                checked = immersiveMode,
-                onCheckedChange = onImmersiveModeChange
+                checked = debugWebView,
+                onCheckedChange = onDebugWebViewChange
             )
         }
 

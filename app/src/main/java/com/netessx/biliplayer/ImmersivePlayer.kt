@@ -162,6 +162,7 @@ fun ImmersivePlayerScreen(
     var showTimerPanel by remember { mutableStateOf(false) }
     var showPlaylist by remember { mutableStateOf(false) }
     var showVolume by remember { mutableStateOf(false) }
+    var showComments by remember { mutableStateOf(false) }
     var prefIndex by remember { mutableStateOf<Int?>(null) }
     var addSheetTrack by remember { mutableStateOf<BiliTrack?>(null) }
     val lines = remember(lyricsEntry?.bvid, lyricsEntry?.synced, lyricsEntry?.plain) {
@@ -174,10 +175,11 @@ fun ImmersivePlayerScreen(
 
     // 返回键优先关闭当前浮层，而不是直接退出播放器
     BackHandler(
-        enabled = showTimerPanel || showPlaylist || showVolume || prefIndex != null
+        enabled = showTimerPanel || showPlaylist || showVolume || showComments || prefIndex != null
     ) {
         when {
             prefIndex != null -> prefIndex = null
+            showComments -> showComments = false
             showVolume -> showVolume = false
             showPlaylist -> showPlaylist = false
             showTimerPanel -> showTimerPanel = false
@@ -276,6 +278,7 @@ fun ImmersivePlayerScreen(
                             onLyricsClick = onOpenLyrics,
                             onTimerClick = { showTimerPanel = true },
                             onPlaylistClick = { showPlaylist = true },
+                            onCommentsClick = { showComments = true },
                             onVolumeClick = { showVolume = true },
                             onAddClick = {
                                 if (uiState.currentBvid.isNotBlank()) {
@@ -346,6 +349,7 @@ fun ImmersivePlayerScreen(
                     onLyricsClick = onOpenLyrics,
                     onTimerClick = { showTimerPanel = true },
                     onPlaylistClick = { showPlaylist = true },
+                    onCommentsClick = { showComments = true },
                     onVolumeClick = { showVolume = true },
                     onAddClick = {
                         if (uiState.currentBvid.isNotBlank()) {
@@ -384,6 +388,19 @@ fun ImmersivePlayerScreen(
                     currentIndex = uiState.currentIndex,
                     onPlay = { PlayerController.playIndex(it) },
                     onLongPress = { prefIndex = it },
+                    onClose = close
+                )
+            }
+        }
+
+        // ---------- 评论抽屉 ----------
+        if (showComments) {
+            GlassBottomSheet(
+                onDismiss = { showComments = false },
+                initialFraction = 0.72f
+            ) { close ->
+                CommentsSheet(
+                    bvid = uiState.currentBvid,
                     onClose = close
                 )
             }
@@ -844,59 +861,18 @@ private fun PlaylistSheet(
     }
 }
 
-/** 单曲偏好编辑浮层（分P / 开始秒 / 结束秒），不依赖 Material 输入框。 */
+/** 单曲偏好编辑浮层（分P / 开始秒 / 结束秒），按播放队列索引保存。 */
 @Composable
 private fun PrefSheet(index: Int, track: BiliTrack, onDismiss: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val initial = remember(index, track.bvid) { Preferences.preference(context, track.bvid) }
-    var pText by remember(index, track.bvid) { mutableStateOf(initial.p?.toString() ?: "") }
-    var beginText by remember(index, track.bvid) { mutableStateOf(initial.beginTime?.toString() ?: "") }
-    var endText by remember(index, track.bvid) { mutableStateOf(initial.endTime?.toString() ?: "") }
-
-    Column(
-        Modifier
-            .padding(horizontal = 32.dp)
-            .liquidGlass(
-                shape = RoundedCornerShape(26.dp),
-                blurRadius = 30.dp,
-                elevation = 22.dp
-            )
-            .clickable(enabled = false) {}
-            .padding(22.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-            BasicText(
-                "单曲偏好",
-                style = TextStyle(color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-            )
-            BasicText(
-                track.title.ifBlank { track.bvid },
-                style = TextStyle(color = TextMuted, fontSize = 12.sp),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            BareField("分 P（留空为第 1P）", pText) { pText = it.filter(Char::isDigit) }
-            BareField("开始秒（跳过片头）", beginText) { beginText = it.filter(Char::isDigit) }
-            BareField("结束秒（自动切歌）", endText) { endText = it.filter(Char::isDigit) }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Pill("保存", highlighted = true) {
-                    PlayerController.setTrackPreference(
-                        index,
-                        TrackPreference(
-                            p = pText.toIntOrNull(),
-                            beginTime = beginText.toIntOrNull(),
-                            endTime = endText.toIntOrNull()
-                        )
-                    )
-                    onDismiss()
-                }
-                Pill("清除") {
-                    PlayerController.setTrackPreference(index, TrackPreference())
-                    onDismiss()
-                }
-                Pill("取消") { onDismiss() }
-            }
-        }
+    TrackPreferenceEditor(
+        track = track,
+        initial = initial,
+        onSave = { PlayerController.setTrackPreference(index, it) },
+        onClear = { PlayerController.setTrackPreference(index, TrackPreference()) },
+        onDismiss = onDismiss
+    )
 }
 
 /** 定时关闭浮层：时长 + 到点暂停/退出，全部自绘。 */
@@ -1041,6 +1017,7 @@ private fun FloatingControls(
     onLyricsClick: () -> Unit,
     onTimerClick: () -> Unit,
     onPlaylistClick: () -> Unit,
+    onCommentsClick: () -> Unit,
     onVolumeClick: () -> Unit,
     onAddClick: () -> Unit,
 ) {
@@ -1060,15 +1037,16 @@ private fun FloatingControls(
             )
             .padding(horizontal = 20.dp, vertical = 16.dp)
     ) {
-        // 进度时间：一左一右放在进度条上方，中间是定时
+        // 操作区：歌词 / 评论 / 定时 / 音量 / 添加
         Row(
             modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
+            horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            BasicText(formatClock(shown), style = TextStyle(color = TextDim, fontSize = 11.sp))
-            Spacer(Modifier.weight(1f))
-            // 歌词和定时放在一起
+            // 歌词 / 评论 / 定时放在一起
             Pill("歌词") { onLyricsClick() }
+            Spacer(Modifier.width(6.dp))
+            Pill("评论") { onCommentsClick() }
             Spacer(Modifier.width(6.dp))
             Pill(
                 uiState.sleepRemaining?.let { formatClock(it.toDouble()) } ?: "定时",
@@ -1091,8 +1069,6 @@ private fun FloatingControls(
                     drawLine(iconColor, Offset(0f, h / 2f), Offset(w, h / 2f), stroke)
                 }
             }
-            Spacer(Modifier.weight(1f))
-            BasicText(formatClock(uiState.duration), style = TextStyle(color = TextDim, fontSize = 11.sp))
         }
 
         // 进度条：拖动即跳转
@@ -1139,6 +1115,15 @@ private fun FloatingControls(
                     )
                 }
             }
+        }
+        // 进度时间：放在进度条下方
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BasicText(formatClock(shown), style = TextStyle(color = TextDim, fontSize = 11.sp))
+            BasicText(formatClock(uiState.duration), style = TextStyle(color = TextDim, fontSize = 11.sp))
         }
         // 传输区：模式图标 | 上一首 | 播放暂停 | 下一首 | 播放列表
         Row(
@@ -1814,13 +1799,12 @@ private fun CoverTreemap(
 fun ImmersiveImportScreen(
     uiState: PlayerUiState,
     onLoginClick: () -> Unit,
-    onStart: (uid: String, favName: String, autoFullscreen: Boolean) -> Unit,
+    onStart: (uid: String, favName: String) -> Unit,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     var uid by remember { mutableStateOf(Preferences.uid(context)) }
     var fav by remember { mutableStateOf(Preferences.favName(context)) }
-    var autoFullscreen by remember { mutableStateOf(Preferences.autoFullscreen(context)) }
 
     LiquidGlassScaffold {
 
@@ -1848,12 +1832,6 @@ fun ImmersiveImportScreen(
             ImmersiveField("UID", uid) { uid = it }
             ImmersiveField("收藏夹名称", fav) { fav = it }
 
-            ImmersiveRow(
-                "自动全屏并隐藏控制条",
-                "关闭则默认显示封面",
-                { TogglePill(autoFullscreen) { autoFullscreen = it } }
-            )
-
             Pill("登录 B 站（可选）") { onLoginClick() }
             BasicText(
                 "登录后可以访问私密收藏夹；Cookie 只保存在本机。",
@@ -1867,7 +1845,7 @@ fun ImmersiveImportScreen(
                 Modifier
                     .fillMaxWidth()
                     .liquidPress(
-                        onClick = { onStart(uid.trim(), fav.trim(), autoFullscreen) },
+                        onClick = { onStart(uid.trim(), fav.trim()) },
                         enabled = enabled
                     )
                     .liquidGlass(
@@ -2092,6 +2070,8 @@ fun ImmersiveHome(
     onSelectStats: (String) -> Unit,
     immersiveMode: Boolean,
     onImmersiveModeChange: (Boolean) -> Unit,
+    debugWebView: Boolean = false,
+    onDebugWebViewChange: (Boolean) -> Unit = {},
     checking: Boolean,
     checkResult: String?,
     onCheckUpdate: () -> Unit,
@@ -2167,6 +2147,8 @@ fun ImmersiveHome(
                     ImmersiveTab.SETTINGS -> ImmersiveSettingsScreen(
                         immersiveMode = immersiveMode,
                         onImmersiveModeChange = onImmersiveModeChange,
+                        debugWebView = debugWebView,
+                        onDebugWebViewChange = onDebugWebViewChange,
                         onLoginClick = onLoginClick
                     )
                     ImmersiveTab.ABOUT -> ImmersiveAboutScreen(
@@ -4304,6 +4286,8 @@ fun ImmersiveAboutScreen(
 fun ImmersiveSettingsScreen(
     immersiveMode: Boolean,
     onImmersiveModeChange: (Boolean) -> Unit,
+    debugWebView: Boolean = false,
+    onDebugWebViewChange: (Boolean) -> Unit = {},
     onLoginClick: () -> Unit = {},
     onBack: (() -> Unit)? = null,
 ) {
@@ -4372,11 +4356,17 @@ fun ImmersiveSettingsScreen(
 
         @Composable
         fun GeneralSection() {
-            ImmersiveRow(
-                "沉浸式界面",
-                "播放器 / 统计 / 设置全部切换为无 Material 的沉浸版",
-                { TogglePill(immersiveMode, onImmersiveModeChange) }
-            )
+            Box(Modifier.clickable { onDebugWebViewChange(!debugWebView) }) {
+                ImmersiveRow(
+                    "调试：置顶显示 WebView",
+                    "在所有页面顶部固定显示网页画面，可直接操作页面",
+                    {
+                        Pill(if (debugWebView) "关闭" else "打开") {
+                            onDebugWebViewChange(!debugWebView)
+                        }
+                    }
+                )
+            }
             ImmersiveDivider()
 
             ImmersiveSection("歌词来源")

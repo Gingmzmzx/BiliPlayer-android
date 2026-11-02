@@ -14,6 +14,9 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.webkit.ScriptHandler
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import org.json.JSONObject
 import org.json.JSONTokener
 
@@ -30,8 +33,21 @@ class HeadlessBrowser(private val context: Context) {
     var onMainFrameError: ((String) -> Unit)? = null
     var onLog: ((String) -> Unit)? = null
 
+    /**
+     * 文档开始加载前注入的脚本（document-start）。用于抢在 B 站前端脚本之前
+     * 安装请求钩子：伪登录、解除评论条数限制、屏蔽登录弹窗。
+     * 已登录时是否跳过由脚本自身判断，避免干扰真实账号。
+     */
+    var documentStartScript: String? = null
+        set(value) {
+            field = value
+            webView?.let { installDocumentStartScript(it, value) }
+        }
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private var webView: WebView? = null
+    private var documentStartHandler: ScriptHandler? = null
+    private var documentStartSupported = true
 
     @SuppressLint("SetJavaScriptEnabled")
     fun ensureCreated() {
@@ -69,6 +85,11 @@ class HeadlessBrowser(private val context: Context) {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     log("页面加载完成: $url")
+                    // 老版本 WebView 不支持 document-start：退回到页面加载完成后注入。
+                    // 此时播放器接口可能已经请求完，但评论、后续导航仍能生效。
+                    if (!documentStartSupported) {
+                        documentStartScript?.let { view?.evaluateJavascript(it, null) }
+                    }
                     onPageFinished?.invoke(url)
                 }
 
@@ -84,8 +105,27 @@ class HeadlessBrowser(private val context: Context) {
                     }
                 }
             }
+            documentStartScript?.let { installDocumentStartScript(this, it) }
         }
         webView = web
+    }
+
+    /** 注册 document-start 脚本；WebView 内核不支持时记录并回退到 onPageFinished。 */
+    private fun installDocumentStartScript(web: WebView, script: String?) {
+        if (script.isNullOrBlank()) return
+        runCatching { documentStartHandler?.remove() }
+        documentStartHandler = null
+        documentStartSupported = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+        if (!documentStartSupported) {
+            log("当前 WebView 不支持 document-start 脚本，改为页面加载完成后注入")
+            return
+        }
+        documentStartHandler = runCatching {
+            WebViewCompat.addDocumentStartJavaScript(web, script, setOf("*"))
+        }.onFailure {
+            log("注入 document-start 脚本失败: ${it.message}")
+        }.getOrNull()
+        if (documentStartHandler != null) log("已注入 document-start 脚本")
     }
 
     /**

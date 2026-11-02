@@ -74,15 +74,23 @@ object PlayerController {
     private val _webView = MutableStateFlow<WebView?>(null)
     val webView: StateFlow<WebView?> = _webView
 
+    /** 评论预取期间让 WebView 拥有真实视口，但移出屏幕，不展示给用户。 */
+    private val _commentViewportActive = MutableStateFlow(false)
+    val commentViewportActive: StateFlow<Boolean> = _commentViewportActive
+
+    /** bvid -> 已读取的评论，打开抽屉时直接命中。 */
+    private val _commentCache = MutableStateFlow<Map<String, CommentsSnapshot>>(emptyMap())
+    internal val commentCache: StateFlow<Map<String, CommentsSnapshot>> = _commentCache
+
+    private val commentLoading = mutableSetOf<String>()
+    private val commentWaiters = mutableMapOf<String, MutableList<(CommentsSnapshot) -> Unit>>()
+
     /** 一次性提示（Toast）。用 SharedFlow 而不是状态字段，避免重组时重复弹。 */
     private val _toast = MutableSharedFlow<String>(extraBufferCapacity = 4)
     val toast: SharedFlow<String> = _toast
 
     /** 当前播放的列表 id；空串表示不在列表库里。 */
     private var currentPlaylistId: String = ""
-
-    /** 画面面板是否显示（由 MainActivity 跟随 Compose 布局更新）。 */
-    private var webPanelVisible: Boolean = false
 
     fun init(context: Context) {
         if (::appContext.isInitialized) return
@@ -360,6 +368,71 @@ object PlayerController {
         }
     }
 
+    /** 按 bvid 保存单曲偏好；正在播放该曲时重新加载以应用分P与裁剪时间。 */
+    fun setPreferenceForBvid(bvid: String, pref: TrackPreference) {
+        Preferences.savePreference(appContext, bvid, pref)
+        if (player?.currentBvid == bvid) {
+            player?.reloadCurrent()
+        }
+    }
+
+    /** 播放开始后静默预取当前视频评论；打开抽屉时直接命中缓存。 */
+    internal fun prefetchComments(bvid: String) {
+        if (bvid.isBlank()) return
+        if (_commentCache.value.containsKey(bvid)) return
+        loadComments(bvid = bvid, reset = true) { }
+    }
+
+    /**
+     * 滚动视频页触发评论区懒加载，然后从 DOM 读取评论。
+     * 读取期间 WebView 只保留视口、移出屏幕，不展示给用户。
+     * 不请求评论接口；回调在主线程执行。
+     */
+    internal fun loadComments(
+        bvid: String = player?.currentBvid.orEmpty(),
+        reset: Boolean = false,
+        onResult: (CommentsSnapshot) -> Unit,
+    ) {
+        val b = browser
+        if (b == null || bvid.isBlank()) {
+            onResult(CommentsSnapshot(0, emptyList()))
+            return
+        }
+        // 同一视频已有读取任务：排队等结果，避免多个任务互相抢滚动位置。
+        if (!commentLoading.add(bvid)) {
+            commentWaiters.getOrPut(bvid) { mutableListOf() }.add(onResult)
+            return
+        }
+        _commentViewportActive.value = true
+        if (reset) b.evaluate(CommentDom.RESET_JS)
+        b.evaluate(CommentDom.PREPARE_JS)
+        scope.launch {
+            // 评论区是懒加载：像用户一样逐段下滚，每次留出请求和渲染时间。
+            repeat(4) {
+                delay(900)
+                b.evaluate(CommentDom.PREPARE_JS)
+            }
+            delay(1600)
+            b.evaluate(CommentDom.EXTRACT_JS) { raw ->
+                val snapshot = CommentDom.parse(raw)
+                appendLog("评论 DOM：读取 ${snapshot.comments.size} 条 / 共 ${snapshot.total}")
+                if (snapshot.comments.isEmpty()) {
+                    appendLog("评论 DOM 原始返回: ${raw.take(240)}")
+                }
+                if (snapshot.comments.isNotEmpty()) {
+                    _commentCache.update { it + (bvid to snapshot) }
+                }
+                b.evaluate(CommentDom.RESTORE_JS)
+                commentLoading.remove(bvid)
+                if (commentLoading.isEmpty()) {
+                    _commentViewportActive.value = false
+                }
+                onResult(snapshot)
+                commentWaiters.remove(bvid)?.forEach { it(snapshot) }
+            }
+        }
+    }
+
     /** 删除播放列表中指定项（同时清理其已保存的偏好与统计）。 */
     fun removeTrack(index: Int) {
         val track = player?.playlist?.getOrNull(index) ?: return
@@ -372,19 +445,15 @@ object PlayerController {
 
     fun playIndex(i: Int) = player?.playIndex(i)
 
-    /** 手动触发网页全屏（用户"显示 WebView"时调用）。 */
-    fun enterFullscreen() = player?.enterWebFullscreen()
-
-    /** 跟随 Compose 布局更新面板可见性；播放器据此决定是否尝试网页全屏。 */
-    fun setWebPanelVisible(visible: Boolean) {
-        webPanelVisible = visible
-    }
-
     fun release() {
         player = null
         browser?.destroy()
         browser = null
         _webView.value = null
+        _commentViewportActive.value = false
+        _commentCache.value = emptyMap()
+        commentLoading.clear()
+        commentWaiters.clear()
     }
 
     // ---------- 内部 ----------
@@ -406,13 +475,18 @@ object PlayerController {
             volume = _state.value.volume
             playMode = _state.value.playMode
             getPreference = { bvid -> Preferences.preference(appContext, bvid) }
-            autoFullscreen = { Preferences.autoFullscreen(appContext) }
             onLog = { msg -> appendLog(msg) }
             onStateUpdate = { syncState() }
             // 视频失效被播放器剔除后，同步清理本地缓存与它的单曲偏好
             onTrackUnavailable = { bvid -> forgetTrack(bvid) }
-            // 面板收起时不要尝试全屏（坐标会落在折叠页面上）
-            isWebPanelVisible = { webPanelVisible }
+            // 播放稳定后静默读取评论，用户点开抽屉时直接展示
+            onVideoReady = {
+                val bvid = currentBvid
+                scope.launch {
+                    delay(1500)
+                    prefetchComments(bvid)
+                }
+            }
         }
         player = p
         p.start()

@@ -24,18 +24,11 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
     /** 返回指定 bvid 的偏好（分P/开始秒/结束秒），由 PlayerController 注入。 */
     var getPreference: ((String) -> TrackPreference)? = null
 
-    /** 是否自动全屏（由 PlayerController 注入，读取 Preferences.autoFullscreen；null 视为开启）。 */
-    var autoFullscreen: (() -> Boolean)? = null
-
-    /**
-     * 画面面板当前是否真的显示着（由 PlayerController 注入，跟随 Compose 布局）。
-     * 切到播放列表/统计/关于时面板会折叠成 0 高度，此时不该尝试全屏，
-     * 否则每切一首都会刷一条「WebView 不可见」的日志。
-     */
-    var isWebPanelVisible: (() -> Boolean)? = null
-
     var onStateUpdate: (() -> Unit)? = null
     var onLog: ((String) -> Unit)? = null
+
+    /** 视频真正开始播放后回调一次（用于静默预取评论等）。 */
+    var onVideoReady: (() -> Unit)? = null
 
     /**
      * 视频失效（页面出现「视频不见了」）时回调，参数是失效的 bvid。
@@ -71,10 +64,14 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
     private var pollTick: Runnable? = null
     private var loadingVideo = false
     private var lostCount = 0
-    private var fullscreened = false
     private var videoReadyHandled = false
     private var resumePosition = 0.0
     private var recoveryCount = 0
+
+    init {
+        // 必须在页面开始加载前安装：伪登录、完整评论区、登录弹窗拦截
+        browser.documentStartScript = ANTI_LOGIN_JS
+    }
 
     // 待处理命令（对应 Python PlayState）
     private var pendingNext = false
@@ -172,7 +169,6 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
         isPlaying = false
         loadingVideo = true
         lostCount = 0
-        fullscreened = false
         videoReadyHandled = false
         emit()
         log("播放第 ${currentIndex + 1}/${playlist.size}: $currentBvid${if (currentP > 0) "（第${currentP}P）" else ""}")
@@ -264,61 +260,8 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
 
 
 
-    /**
-     * 等视频真正播放、播放器就绪后，点击"网页全屏"按钮一次。
-     * 注意：网页全屏是 toggle（点一次进、再点一次退），所以只点一次、绝不重试，
-     * 避免第二次点击把全屏退掉。
-     */
-    private fun startWebFullscreen() {
-        // 面板被主动收起（切到别的 tab / 隐藏画面）：静默跳过，用户没在看画面，
-        // 不必每切一首就刷一条日志
-        if (isWebPanelVisible?.invoke() == false) return
-        // WebView 不可见（高度<=0）时全屏按钮坐标会落在折叠页面的错误位置（如首页按钮），直接跳过
-        if ((browser.view()?.height ?: 0) <= 0) {
-            log("WebView 不可见，跳过自动全屏")
-            return
-        }
-        waitForJs(
-            "(function(){var v=document.querySelector('video');return !!(v&&!v.paused&&v.currentTime>0.5);})()",
-            timeoutMs = 20000,
-            onReady = {
-                waitForJs(
-                    "(function(){ return !!document.querySelector('.bpx-player-ctrl-web'); })()",
-                    timeoutMs = 10000,
-                    onReady = {
-                        // 仅当 WebView 可见（高度>0）时记录已全屏；隐藏时点击无效则不标记，便于手动显示时补全屏
-                        if ((browser.view()?.height ?: 0) > 0) fullscreened = true
-                        // 诊断：打印元素状态，便于定位 evaluateJavascript 与 DevTools 差异
-//                        browser.evaluate(DEBUG_FULLSCREEN_JS) { raw ->
-//                            log("全屏诊断: $raw")
-//                        }
-                        // 真实触摸点击（提供可信用户手势，解决 evaluateJavascript 无手势失效问题）
-                        browser.touchElementCenter(".bpx-player-ctrl-web") { found ->
-                            log(if (found) "已真实触摸点击全屏按钮" else "未找到全屏按钮")
-                        }
-                        // 点击已生效（touch 点击可靠），全屏后直接隐藏控制条/顶部栏
-                        mainHandler.postDelayed({
-                            browser.evaluate(HIDE_CONTROLS_JS)
-                            log("已隐藏播放器控制条")
-                        }, 1500)
-                    },
-                    onTimeout = { log("等待网页全屏按钮超时") },
-                )
-            },
-            onTimeout = { log("等待视频播放超时") },
-        )
-    }
-
-    /** 手动触发现场全屏（用户在 UI 上"显示 WebView"时调用）；已全屏过则不重复点击。 */
-    fun enterWebFullscreen() {
-        if (!fullscreened && playlist.isNotEmpty()) {
-            log("手动触发网页全屏")
-            startWebFullscreen()
-        }
-    }
-
     private fun onVideoReady() {
-        // onPageFinished 会触发多次，这里保证每首歌只执行一次初始化/全屏逻辑
+        // onPageFinished 会触发多次，这里保证每首歌只执行一次初始化逻辑
         if (videoReadyHandled) return
         videoReadyHandled = true
         // 读取标题
@@ -355,15 +298,12 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
                         log("恢复续播: ${resumePosition}秒")
                         resumePosition = 0.0
                     }
-                    // 仅当"自动全屏"开启时执行全屏并隐藏控制条
-                    if (autoFullscreen?.invoke() != false) {
-                        startWebFullscreen()
-                    }
                     loadingVideo = false
                     isPlaying = true
                     log("开始播放: $currentTitle ($currentBvid)${if (currentEndTime > 0) "（${currentEndTime}s 截断）" else ""}")
                     emit()
                     startPolling()
+                    onVideoReady?.invoke()
                 }
             }
         }
@@ -598,9 +538,238 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
             })();
         """.trimIndent()
 
+        /**
+         * document-start 注入：参考 vruses/beefreely 的未登录体验修复。
+         *
+         * - 已登录（存在 DedeUserID__ckMd5）时完全跳过，避免干扰真实账号；
+         * - 伪造 DedeUserID 与 nav / player 响应，消除登录弹窗与评论区遮罩；
+         * - 评论区请求去掉 cookie（credentials: omit），解除未登录只显示三条的限制；
+         * - 屏蔽 miniLogin 脚本并隐藏登录弹层。
+         */
+        private val ANTI_LOGIN_JS = """
+            (function(){
+              try {
+                if (window.__biliAntiLoginInstalled) return;
+                window.__biliAntiLoginInstalled = true;
+                if (window.top !== window.self) return;
+                if (location.hostname === 'passport.bilibili.com') return;
+
+                // 真实登录标记存在时不启用伪登录
+                if (/(?:^|;\s*)DedeUserID__ckMd5=([^;]+)/.test(document.cookie)) return;
+                window.__biliAntiLoginActive = true;
+
+                // 1. 伪 DedeUserID：部分前端逻辑只检查这个字段
+                if (!/(?:^|;\s*)DedeUserID=/.test(document.cookie)) {
+                  var fakeMid = String(Math.floor(Math.random() * 9007199254740000) + 1);
+                  document.cookie = 'DedeUserID=' + fakeMid + '; path=/; domain=.bilibili.com';
+                }
+
+                // 2. 屏蔽登录脚本与登录弹层
+                var origAppend = Node.prototype.appendChild;
+                Node.prototype.appendChild = function(child){
+                  try {
+                    if (child && child.tagName === 'SCRIPT' && child.src &&
+                        (child.src.indexOf('miniLogin') >= 0 ||
+                         child.src.indexOf('passport.bilibili.com') >= 0)) {
+                      return child;
+                    }
+                  } catch(e) {}
+                  return origAppend.call(this, child);
+                };
+                function hideLoginLayers(){
+                  try {
+                    if (!document.head || document.getElementById('bili-anti-login-style')) return;
+                    var style = document.createElement('style');
+                    style.id = 'bili-anti-login-style';
+                    style.textContent = '.bili-mini-mask,.bili-mini-register,.bili-mini-login,.bili-mini-mask-wrp,.bili-login-dialog,.bili-login-card,.login-panel,.login-mask{display:none!important}';
+                    document.head.appendChild(style);
+                  } catch(e) {}
+                }
+                hideLoginLayers();
+                document.addEventListener('DOMContentLoaded', hideLoginLayers);
+
+                // 3. 伪登录响应
+                var MOCK_NAV = {
+                  code: 0, message: '0', ttl: 1,
+                  data: {
+                    isLogin: true, mid: 3493281916783362, uname: 'bilibili',
+                    face: 'https://i0.hdslb.com/bfs/face/0c84b9f4ad546d3f20324809d45fc439a2a8ddab.jpg',
+                    email_verified: 1, mobile_verified: 1, money: 9999.99, moral: 70,
+                    level_info: { current_level: 6, current_min: 28800, current_exp: 29050, next_exp: '--' },
+                    vipStatus: 0, vipType: 0, is_senior_member: 1, answer_status: 0,
+                    official: { role: 0, title: '', desc: '', type: -1 },
+                    officialVerify: { type: -1, desc: '' },
+                    wallet: { mid: 3493281916783362, bcoin_balance: 0, coupon_balance: 0, coupon_due_time: 0 },
+                    wbi_img: { img_url: '', sub_url: '' }
+                  }
+                };
+                var MOCK_ARCHIVE_RELATION = {
+                  code: 0, message: '0', ttl: 1,
+                  data: { attention: false, favorite: false, season_fav: false, like: false, dislike: false, coin: 0 }
+                };
+                var MOCK_RELATION = {
+                  code: 0, message: '0', ttl: 1,
+                  data: {
+                    relation: { mid: 0, attribute: 0, mtime: 0, tag: null, special: 0 },
+                    be_relation: { mid: 0, attribute: 0, mtime: 0, tag: null, special: 0 }
+                  }
+                };
+                var MOCK_SPACE_SEARCH = {
+                  code: 0, message: '0', ttl: 1,
+                  data: {
+                    list: { slist: [], tlist: {}, vlist: [] },
+                    page: {}, episodic_button: {}, is_risk: false, gaia_res_type: 0, gaia_data: null
+                  }
+                };
+
+                function mockFor(url){
+                  if (url.indexOf('/x/web-interface/nav') >= 0) return MOCK_NAV;
+                  if (url.indexOf('/x/web-interface/archive/relation') >= 0) return MOCK_ARCHIVE_RELATION;
+                  if (url.indexOf('/x/web-interface/relation') >= 0) return MOCK_RELATION;
+                  return null;
+                }
+                function patchPlayer(obj){
+                  try {
+                    var data = obj && obj.data ? obj.data : obj;
+                    if (data) {
+                      data.login_mid = 3493281916783362;
+                      data.need_login_subtitle = false;
+                      if (!data.level_info) data.level_info = {};
+                      data.level_info.current_level = 6;
+                    }
+                  } catch(e) {}
+                  return obj;
+                }
+                function isComment(url){
+                  return url.indexOf('/x/v2/reply/wbi/main') >= 0 ||
+                         url.indexOf('/x/v2/reply/reply') >= 0;
+                }
+                function stripCommentDevice(url){
+                  if (url.indexOf('/x/v2/reply/reply') < 0) return url;
+                  try {
+                    var u = new URL(url, location.href);
+                    u.searchParams.delete('x-bili-device-req-json');
+                    return u.href;
+                  } catch(e) { return url; }
+                }
+                function jsonResponse(obj){
+                  return new Response(JSON.stringify(obj), {
+                    status: 200,
+                    statusText: 'OK',
+                    headers: { 'Content-Type': 'application/json; charset=utf-8' }
+                  });
+                }
+
+                // 4. fetch 钩子
+                if (typeof window.fetch === 'function') {
+                  var origFetch = window.fetch;
+                  window.fetch = function(input, init){
+                    var url = '';
+                    try { url = typeof input === 'string' ? input : (input && input.url) || ''; } catch(e) {}
+                    try {
+                      if (isComment(url)) {
+                        url = stripCommentDevice(url);
+                        init = Object.assign({}, init || {});
+                        init.credentials = 'omit';
+                        input = (typeof input === 'string') ? url : new Request(url, input);
+                      }
+                      var promise = origFetch.call(this, input, init);
+                      if (url.indexOf('/x/player/wbi/v2') >= 0) {
+                        return promise.then(function(res){
+                          return res.clone().json().then(function(obj){
+                            return jsonResponse(patchPlayer(obj));
+                          }).catch(function(){ return res; });
+                        });
+                      }
+                      if (url.indexOf('/x/space/wbi/arc/search') >= 0) {
+                        return promise.then(function(res){
+                          return res.clone().json().then(function(obj){
+                            return (obj && obj.code) ? jsonResponse(MOCK_SPACE_SEARCH) : res;
+                          }).catch(function(){ return res; });
+                        });
+                      }
+                      var mock = mockFor(url);
+                      if (mock) return promise.then(function(){ return jsonResponse(mock); });
+                      return promise;
+                    } catch(e) {
+                      return origFetch.apply(this, arguments);
+                    }
+                  };
+                }
+
+                // 5. XHR 钩子
+                try {
+                  var origOpen = XMLHttpRequest.prototype.open;
+                  var origSend = XMLHttpRequest.prototype.send;
+                  XMLHttpRequest.prototype.open = function(method, url){
+                    var target = String(url || '');
+                    if (target.indexOf('/x/v2/reply/reply') >= 0) {
+                      target = stripCommentDevice(target);
+                      arguments[1] = target;
+                    }
+                    this.__biliUrl = target;
+                    return origOpen.apply(this, arguments);
+                  };
+                  XMLHttpRequest.prototype.send = function(body){
+                    var url = this.__biliUrl || '';
+                    if (isComment(url)) {
+                      try { this.withCredentials = false; } catch(e) {}
+                    }
+                    if (url.indexOf('/x/player/wbi/v2') >= 0) this.__biliPatchPlayer = true;
+                    if (url.indexOf('/x/space/wbi/arc/search') >= 0) this.__biliSpaceSearch = true;
+                    var mock = mockFor(url);
+                    if (mock) this.__biliMock = mock;
+                    return origSend.apply(this, arguments);
+                  };
+                  var descText = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText');
+                  var descResponse = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'response');
+                  function mockXhr(xhr){
+                    if (xhr.__biliMock) return xhr.__biliMock;
+                    if (!xhr.__biliPatchPlayer && !xhr.__biliSpaceSearch) return null;
+                    try {
+                      var obj = null;
+                      if (xhr.responseType === 'json') {
+                        obj = descResponse.get.call(xhr);
+                      } else if (xhr.responseType === '' || xhr.responseType === 'text') {
+                        obj = JSON.parse(descText.get.call(xhr));
+                      }
+                      if (!obj) return null;
+                      if (xhr.__biliSpaceSearch) {
+                        xhr.__biliMock = obj.code ? MOCK_SPACE_SEARCH : obj;
+                      } else {
+                        xhr.__biliMock = patchPlayer(obj);
+                      }
+                      return xhr.__biliMock;
+                    } catch(e) { return null; }
+                  }
+                  if (descText && descText.get) {
+                    Object.defineProperty(XMLHttpRequest.prototype, 'responseText', {
+                      configurable: true,
+                      get: function(){
+                        var mock = mockXhr(this);
+                        return mock ? JSON.stringify(mock) : descText.get.call(this);
+                      }
+                    });
+                  }
+                  if (descResponse && descResponse.get) {
+                    Object.defineProperty(XMLHttpRequest.prototype, 'response', {
+                      configurable: true,
+                      get: function(){
+                        var mock = mockXhr(this);
+                        if (mock) return this.responseType === 'json' ? mock : JSON.stringify(mock);
+                        return descResponse.get.call(this);
+                      }
+                    });
+                  }
+                } catch(e) {}
+              } catch(e) {}
+            })();
+        """.trimIndent()
+
         private val ANTI_PAUSE_JS = """
             (function(){
-              if (document.cookie.indexOf('DedeUserID') >= 0) return;
+              // 真实登录时保持原有行为；伪登录状态仍需要防暂停
+              if (document.cookie.indexOf('DedeUserID__ckMd5') >= 0 && !window.__biliAntiLoginActive) return;
               if (window.location.hostname !== 'www.bilibili.com') return;
               // 1. 屏蔽登录弹窗脚本
               var oAppend = Node.prototype.appendChild;
@@ -650,58 +819,6 @@ class BiliMusicPlayer(private val browser: HeadlessBrowser) {
                 if (!window.__biliManualPause && v && v.paused) { try { v.play(); } catch(e){} }
               });
             })();
-        """.trimIndent()
-
-        private const val MAX_FULLSCREEN_RETRY = 10
-
-        /** 隐藏播放器控制条与顶部栏。 */
-        private val HIDE_CONTROLS_JS = """
-            (function(){
-              document.querySelectorAll('.bpx-player-control-wrap, .bpx-player-top-wrap').forEach(function(el){ el.style.display = 'none'; });
-              return 'hidden';
-            })()
-        """.trimIndent()
-
-        /** 诊断：打印网页全屏按钮的可见性/位置/是否在 shadow DOM、isWebFullscreen 是否存在。 */
-        private val DEBUG_FULLSCREEN_JS = """
-            (function(){
-              var el = document.querySelector('.bpx-player-ctrl-web');
-              var info = {found: !!el};
-              if (el) {
-                var r = el.getBoundingClientRect();
-                var cs = window.getComputedStyle(el);
-                info.rect = {x:Math.round(r.x), y:Math.round(r.y), w:Math.round(r.width), h:Math.round(r.height)};
-                info.display = cs.display;
-                info.visibility = cs.visibility;
-                info.pointerEvents = cs.pointerEvents;
-                info.offsetParent = !!el.offsetParent;
-              }
-              info.isWebFullscreen = !!(window.player && typeof window.player.isWebFullscreen === 'function');
-              function findShadows(selector, root) {
-                if (root.querySelector(selector)) return true;
-                var all = root.querySelectorAll('*');
-                for (var i=0;i<all.length;i++) {
-                  var n = all[i];
-                  if (n.shadowRoot && findShadows(selector, n.shadowRoot)) return true;
-                }
-                return false;
-              }
-              info.shadowFound = findShadows('.bpx-player-ctrl-web', document);
-              return JSON.stringify(info);
-            })()
-        """.trimIndent()
-
-        private val IS_WEB_FULLSCREEN_JS = """
-            (function(){
-              var p = window.player;
-              if (p && typeof p.isWebFullscreen === 'function') return p.isWebFullscreen() ? 'yes' : 'no';
-              var c = document.querySelector('.bpx-player-container');
-              if (c) {
-                var cls = c.className || '';
-                if (cls.indexOf('web-fullscreen') >= 0 || cls.indexOf('fullscreen') >= 0) return 'yes';
-              }
-              return 'unknown';
-            })()
         """.trimIndent()
 
         private val GET_STATE_JS = """
